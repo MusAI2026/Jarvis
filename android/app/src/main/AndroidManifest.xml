@@ -47,7 +47,7 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
     <application
-        android:label="JARVIS"
+        android:label="JARVIS TR"
         android:name="${applicationName}"
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true"
@@ -102,7 +102,7 @@
         <!-- Notification Listener for live email & SMS inbox triage -->
         <service
             android:name=".InboxNotificationListenerService"
-            android:label="PrivateAgent Email &amp; SMS Listener"
+            android:label="JARVIS E-posta ve SMS Dinleyicisi"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
