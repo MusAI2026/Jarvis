@@ -147,7 +147,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 20),
               SizedBox(width: 10),
-              Text('Telegram configuration saved & reloaded'),
+              Text('Telegram ayarları kaydedildi ve yeniden yüklendi'),
             ],
           ),
           duration: const Duration(seconds: 2),
@@ -171,7 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 20),
               SizedBox(width: 10),
-              Text('AI provider settings saved successfully'),
+              Text('Yapay zekâ sağlayıcı ayarları kaydedildi'),
             ],
           ),
           duration: const Duration(seconds: 2),
@@ -187,7 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text(
-          'Settings',
+          'Ayarlar',
           style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.3),
         ),
         backgroundColor: Colors.transparent,
@@ -246,7 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 _sectionHeader(
                   icon: Icons.psychology_rounded,
-                  title: 'AI Intelligence Engine',
+                  title: 'Yapay zekâ motoru',
                   color: const Color(0xFF818CF8),
                 ),
                 _aiProviderCard(),
@@ -254,7 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 _sectionHeader(
                   icon: Icons.shield_rounded,
-                  title: 'Autonomous J.A.R.V.I.S. Core',
+                  title: 'Otonom J.A.R.V.I.S. çekirdeği',
                   color: const Color(0xFF00E5FF),
                 ),
                 _jarvisCard(),
@@ -262,7 +262,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 _sectionHeader(
                   icon: Icons.security_rounded,
-                  title: 'Permissions & Telemetry Inboxes',
+                  title: 'İzinler ve gelen kutuları',
                   color: const Color(0xFF38BDF8),
                 ),
                 _permissionsCard(),
@@ -270,7 +270,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 _sectionHeader(
                   icon: Icons.smart_toy_rounded,
-                  title: 'Device Automation Agent',
+                  title: 'Cihaz otomasyon asistanı',
                   color: const Color(0xFFA78BFA),
                 ),
                 _agentCard(),
@@ -278,7 +278,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 _sectionHeader(
                   icon: Icons.send_rounded,
-                  title: 'Telegram Remote Bridge',
+                  title: 'Telegram bağlantısı',
                   color: const Color(0xFF0EA5E9),
                 ),
                 _telegramCard(),
@@ -286,7 +286,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 _sectionHeader(
                   icon: Icons.palette_outlined,
-                  title: 'Appearance & Visual Theme',
+                  title: 'Görünüm ve tema',
                   color: const Color(0xFFF472B6),
                 ),
                 _appearanceCard(),
@@ -338,7 +338,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Model Provider Preset',
+            'Hazır model sağlayıcısı',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 10),
@@ -357,7 +357,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 18),
           GlassTextField(
             controller: _baseUrlController,
-            labelText: 'Base URL',
+            labelText: 'Temel URL',
             hintText: 'https://api.example.com/v1',
             prefixIcon: const Icon(Icons.link_rounded, size: 20),
             keyboardType: TextInputType.url,
@@ -365,7 +365,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           GlassTextField(
             controller: _apiKeyController,
-            labelText: 'API key',
+            labelText: 'API anahtarı',
             obscureText: _obscureKey,
             prefixIcon: const Icon(Icons.vpn_key_outlined, size: 20),
             suffixIcon: IconButton(
@@ -403,7 +403,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 size: 18,
               ),
               label: Text(
-                _aiDirty ? 'Save changes' : 'Saved',
+                _aiDirty ? 'Değişiklikleri kaydet' : 'Kaydedildi',
                 style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
               ),
             ),
@@ -413,7 +413,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: EdgeInsets.only(top: 8),
               child: Center(
                 child: Text(
-                  'Unsaved changes — tap Save to persist your API key and model.',
+                  'Kaydedilmemiş değişiklikler — API anahtarını ve modeli saklamak için Kaydet seçeneğine dokunun.',
                   style: TextStyle(fontSize: 11.5, color: Colors.amber),
                 ),
               ),
@@ -422,15 +422,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Divider(height: 1),
           const SizedBox(height: 10),
           GlassSwitchTile(
-            title: 'Send system prompt',
-            subtitle: 'Recommended — teaches model precise phone action schema',
+            title: 'Sistem talimatını gönder',
+            subtitle: 'Önerilir — modele telefon işlem şemasını öğretir',
             icon: Icons.code_rounded,
             value: _settings.useSystemPrompt,
             onChanged: (v) => _settings.setUseSystemPrompt(v),
           ),
           const SizedBox(height: 6),
           GlassSliderRow(
-            label: 'Temperature (Creativity)',
+            label: 'Sıcaklık (yaratıcılık)',
             value: _settings.temperature,
             min: 0,
             max: 2,
@@ -439,7 +439,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => _settings.setTemperature(v),
           ),
           GlassSliderRow(
-            label: 'Max Response Tokens',
+            label: 'Maksimum yanıt jetonu',
             value: _settings.maxTokens.toDouble(),
             min: 256,
             max: 4096,
@@ -537,7 +537,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                               ),
                               child: Text(
-                                isAlwaysOn ? 'ALWAYS-ON ACTIVE' : 'STANDBY',
+                                isAlwaysOn ? 'SÜREKLİ DİNLEME AÇIK' : 'BEKLEMEDE',
                                 style: TextStyle(
                                   fontSize: 9.5,
                                   fontWeight: FontWeight.w800,
@@ -552,7 +552,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          'Always-on ears, studio neural voice, personality, workflows & memory',
+                          'Sürekli dinleme, doğal ses, kişilik, iş akışları ve hafıza',
                           style: TextStyle(
                             color: theme.colorScheme.onSurfaceVariant,
                             fontSize: 12,
@@ -576,7 +576,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   GlassPill(
                     icon: const Icon(Icons.mic_rounded, size: 13, color: Color(0xFF00E5FF)),
-                    label: isAlwaysOn ? 'Hands-Free Receptors' : 'Tap to Talk',
+                    label: isAlwaysOn ? 'Eller serbest dinleme' : 'Konuşmak için dokun',
                     color: const Color(0xFF00E5FF),
                   ),
                   GlassPill(
@@ -638,7 +638,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'App Permissions & Inboxes',
+                          'Uygulama izinleri ve gelen kutuları',
                           style: TextStyle(
                             fontSize: 15.5,
                             fontWeight: FontWeight.w700,
@@ -646,7 +646,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          'Microphone, SMS stream, Email inbox & Accessibility service',
+                          'Mikrofon, SMS, e-posta ve erişilebilirlik hizmeti',
                           style: TextStyle(
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
                             fontSize: 12,
@@ -670,22 +670,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   GlassPill(
                     icon: Icon(Icons.sms_outlined, size: 13, color: Colors.blueAccent),
-                    label: 'SMS Inbox',
+                    label: 'SMS gelen kutusu',
                     color: Colors.blueAccent,
                   ),
                   GlassPill(
                     icon: Icon(Icons.mark_email_unread_outlined, size: 13, color: Colors.amber),
-                    label: 'Email Stream',
+                    label: 'E-posta akışı',
                     color: Colors.amber,
                   ),
                   GlassPill(
                     icon: Icon(Icons.mic_rounded, size: 13, color: Color(0xFF00E5FF)),
-                    label: 'Mic Receptor',
+                    label: 'Mikrofon',
                     color: Color(0xFF00E5FF),
                   ),
                   GlassPill(
                     icon: Icon(Icons.accessibility_new_rounded, size: 13, color: Color(0xFF818CF8)),
-                    label: 'Screen Touch',
+                    label: 'Ekran kontrolü',
                     color: Color(0xFF818CF8),
                   ),
                 ],
@@ -704,7 +704,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(
         children: [
           GlassSliderRow(
-            label: 'Maximum Task Steps',
+            label: 'Maksimum görev adımı',
             value: _settings.maxSteps.toDouble(),
             min: 3,
             max: 40,
@@ -713,7 +713,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => _settings.setMaxSteps(v.round()),
           ),
           GlassSliderRow(
-            label: 'Step Delay Buffer',
+            label: 'Adımlar arası bekleme',
             value: _settings.stepDelayMs.toDouble(),
             min: 200,
             max: 5000,
@@ -723,15 +723,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 4),
           GlassSwitchTile(
-            title: 'Skill Memory (Macro Fast Replay)',
-            subtitle: 'Replay known sequences without invoking AI model',
+            title: 'Beceri hafızası (hızlı makro)',
+            subtitle: 'Bilinen işlemleri yapay zekâ çağırmadan tekrarla',
             icon: Icons.auto_awesome_rounded,
             value: _settings.skillsEnabled,
             onChanged: (v) => _settings.setSkillsEnabled(v),
           ),
           GlassSwitchTile(
-            title: 'Spoken Voice Feedback',
-            subtitle: 'Vocalize automation progress and task results aloud',
+            title: 'Sesli geri bildirim',
+            subtitle: 'Görev ilerlemesini ve sonuçlarını sesli bildir',
             icon: Icons.record_voice_over_rounded,
             value: _settings.voiceFeedback,
             onChanged: (v) => _settings.setVoiceFeedback(v),
@@ -752,8 +752,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GlassSwitchTile(
-            title: 'Enable Telegram Remote Bridge',
-            subtitle: running ? 'Bot actively polling for commands' : 'Bot service stopped',
+            title: 'Telegram uzaktan bağlantısını etkinleştir',
+            subtitle: running ? 'Bot komutları kontrol ediyor' : 'Bot hizmeti durdu',
             icon: Icons.send_rounded,
             value: _settings.telegramEnabled,
             onChanged: (v) async {
@@ -768,7 +768,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           GlassTextField(
             controller: _tokenController,
-            labelText: 'Telegram Bot Token (from @BotFather)',
+            labelText: 'Telegram bot anahtarı (@BotFather)',
             obscureText: _obscureToken,
             prefixIcon: const Icon(Icons.key_outlined, size: 20),
             suffixIcon: IconButton(
@@ -782,8 +782,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           GlassTextField(
             controller: _chatsController,
-            labelText: 'Allowed Chat IDs',
-            hintText: 'Comma-separated (leave empty for auto-pairing)',
+            labelText: 'İzin verilen sohbet kimlikleri',
+            hintText: 'Virgülle ayırın (otomatik eşleme için boş bırakın)',
             prefixIcon: const Icon(Icons.group_outlined, size: 20),
           ),
           const SizedBox(height: 14),
@@ -805,7 +805,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 size: 18,
               ),
               label: Text(
-                _telegramDirty ? 'Save Telegram settings' : 'Telegram saved',
+                _telegramDirty ? 'Telegram ayarlarını kaydet' : 'Telegram kaydedildi',
                 style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
               ),
             ),
@@ -828,7 +828,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Paired Owner Device',
+                          'Eşleştirilmiş cihaz',
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w700,
@@ -853,14 +853,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     ),
                     icon: const Icon(Icons.link_off_rounded, size: 15),
-                    label: const Text('Unpair', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                    label: const Text('Eşlemeyi kaldır', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
                     onPressed: () async {
                       await _settings.setTelegramOwnerChatId('');
                       if (!mounted) return;
                       setState(() {});
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: const Text('Telegram owner pairing unlinked'),
+                          content: const Text('Telegram cihaz eşlemesi kaldırıldı'),
                           duration: const Duration(seconds: 2),
                           behavior: SnackBarBehavior.floating,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -888,7 +888,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Status: Unpaired',
+                          'Durum: Eşlenmemiş',
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w700,
@@ -896,7 +896,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ),
                         Text(
-                          'Send /start or /pair to your bot in Telegram to auto-pair, or enter Chat IDs above.',
+                          'Otomatik eşleme için Telegram botunuza /start veya /pair gönderin ya da yukarıya sohbet kimliklerini girin.',
                           style: TextStyle(
                             fontSize: 11,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -921,7 +921,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Theme Preference',
+            'Tema tercihi',
             style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
@@ -930,7 +930,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Expanded(
                 child: _themeOption(
                   mode: ThemeMode.system,
-                  label: 'System',
+                  label: 'Sistem',
                   icon: Icons.brightness_auto_rounded,
                 ),
               ),
@@ -938,7 +938,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Expanded(
                 child: _themeOption(
                   mode: ThemeMode.light,
-                  label: 'Light',
+                  label: 'Açık',
                   icon: Icons.light_mode_rounded,
                 ),
               ),
@@ -946,7 +946,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Expanded(
                 child: _themeOption(
                   mode: ThemeMode.dark,
-                  label: 'Dark',
+                  label: 'Koyu',
                   icon: Icons.dark_mode_rounded,
                 ),
               ),
