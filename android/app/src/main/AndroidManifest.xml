@@ -73,6 +73,12 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Allow the user to select MAX as Android's digital assistant.
+                 System assist launches the existing Flutter activity. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
         <!-- PrivateAgent accessibility service: reads screen hierarchy and
              performs gestures (tap, swipe, scroll, type) on behalf of the user. -->
