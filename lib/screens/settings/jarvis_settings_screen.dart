@@ -343,11 +343,8 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
   // ---------------------------------------------------------------------------
   Widget _voiceCard(ThemeData theme) {
     final neuralVoiceOptions = [
-      ('en-GB-RyanNeural', 'Ryan (British Neural - Authentic Jarvis)', 'Paul Bettany style, warm, articulate & human'),
-      ('en-GB-ThomasNeural', 'Thomas (British Neural - Conversational)', 'Natural UK cadence and smooth phrasing'),
-      ('en-US-GuyNeural', 'Guy (US Neural - Studio Male)', 'Polished, authoritative US broadcaster tone'),
-      ('en-US-ChristopherNeural', 'Christopher (US Neural - Confident)', 'Direct, crisp and focused'),
-      ('en-IE-EmilyNeural', 'Emily (Irish Neural - F.R.I.D.A.Y.)', 'Charming, brisk Irish accent'),
+      ('tr-TR-AhmetNeural', 'Ahmet (Türkçe - erkek)', 'Türkçe doğal ses'),
+      ('tr-TR-EmelNeural', 'Emel (Türkçe - kadın)', 'Türkçe doğal ses'),
     ];
 
     return Card(
@@ -400,12 +397,12 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
             const SizedBox(height: 8),
 
             const Text(
-              'Voice Model & Personality',
+              'MAX konuşma sesi',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
-              'Select the studio human voice for Jarvis spoken responses.',
+              'MAX için Türkçe stüdyo sesini seçin.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -449,11 +446,11 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                 ),
                 const SizedBox(width: 10),
                 IconButton.filledTonal(
-                  tooltip: 'Test voice',
+                  tooltip: 'Sesi test et',
                   icon: const Icon(Icons.volume_up_rounded, size: 22),
                   onPressed: () async {
                     await VoiceService.instance.speak(
-                      'All systems operational, sir. Standing by for your command.',
+                      'Merhaba, ben MAX. Sizi dinliyorum.',
                     );
                   },
                 ),
