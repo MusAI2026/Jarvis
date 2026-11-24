@@ -736,9 +736,10 @@ void main() {
 
       final greeting = await personality.generateExecutiveGreeting();
       expect(greeting, contains('Abuzar'));
-      expect(greeting.toLowerCase(), contains('meeting'));
+      expect(greeting.toLowerCase(), contains('toplantı'));
       expect(greeting, contains('Prepare quarterly analysis'));
-      expect(greeting, contains('to-do'));
+      expect(greeting, contains('Yapılacak')); 
+      expect(greeting, contains('Ben MAX.'));
     });
 
     test('Dynamic News, Web Search, and Sentry Protocol acknowledgments are condition-aware', () {
