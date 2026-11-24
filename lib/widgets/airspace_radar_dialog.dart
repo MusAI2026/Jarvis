@@ -83,7 +83,7 @@ class _AirspaceRadarDialogState extends State<AirspaceRadarDialog>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'OVERHEAD AIRSPACE RADAR',
+                              'HAVA SAHASI RADARI',
                               style: TextStyle(
                                 color: green,
                                 fontFamily: 'monospace',
@@ -93,7 +93,7 @@ class _AirspaceRadarDialogState extends State<AirspaceRadarDialog>
                               ),
                             ),
                             Text(
-                              'LIVE ADS-B & SATELLITE TRACKING',
+                              'CANLI ADS-B VE UYDU TAKİBİ',
                               style: TextStyle(
                                 color: Colors.white54,
                                 fontFamily: 'monospace',
@@ -145,7 +145,7 @@ class _AirspaceRadarDialogState extends State<AirspaceRadarDialog>
                                   ),
                                 ),
                                 const Text(
-                                  'SECTOR RANGE: 40 NM',
+                                  'SEKTÖR MENZİLİ: 40 DENİZ MİLİ',
                                   style: TextStyle(
                                     color: Colors.white38,
                                     fontFamily: 'monospace',
@@ -178,7 +178,7 @@ class _AirspaceRadarDialogState extends State<AirspaceRadarDialog>
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'ISS Orbital Pass: ${iss.distanceFromUserKm.toInt()} km away (Alt: ${iss.altitudeKm.toInt()} km)',
+                              'ISS yörünge geçişi: ${iss.distanceFromUserKm.toInt()} km uzakta (İrtifa: ${iss.altitudeKm.toInt()} km)',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontFamily: 'monospace',
