@@ -100,28 +100,28 @@ class VoiceService {
     try {
       switch (profile) {
         case 'friday':
-          await _tts.setLanguage('en-IE');
+          await _tts.setLanguage('tr-TR');
           await _tts.setPitch(1.05);
           await _tts.setSpeechRate(0.52);
           break;
         case 'stark':
-          await _tts.setLanguage('en-US');
+          await _tts.setLanguage('tr-TR');
           await _tts.setPitch(0.95);
           await _tts.setSpeechRate(0.55);
           break;
         case 'kip':
-          await _tts.setLanguage('en-GB');
+          await _tts.setLanguage('tr-TR');
           await _tts.setPitch(0.78);
           await _tts.setSpeechRate(0.48);
           break;
         case 'cortana':
-          await _tts.setLanguage('en-US');
+          await _tts.setLanguage('tr-TR');
           await _tts.setPitch(1.10);
           await _tts.setSpeechRate(0.52);
           break;
         case 'paul':
         default:
-          await _tts.setLanguage('en-GB');
+          await _tts.setLanguage('tr-TR');
           await _tts.setPitch(0.86);
           await _tts.setSpeechRate(0.48);
 
@@ -132,7 +132,7 @@ class VoiceService {
                 if (v is Map) {
                   final name = (v['name'] ?? '').toString().toLowerCase();
                   final locale = (v['locale'] ?? '').toString().toLowerCase();
-                  if (locale.contains('en-gb') || locale.contains('en_gb')) {
+                  if (locale.contains('tr-tr') || locale.contains('tr_tr')) {
                     if (name.contains('gbd') ||
                         name.contains('gbb') ||
                         name.contains('male') ||
@@ -179,7 +179,7 @@ class VoiceService {
       _ttsReady = true;
     } catch (_) {
       try {
-        await _tts.setLanguage('en-US');
+        await _tts.setLanguage('tr-TR');
         _ttsReady = true;
       } catch (_) {
         _ttsReady = false;
