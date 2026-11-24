@@ -1190,7 +1190,7 @@ Analyze the provided visual image with exceptional detail and precision.
 1. Identify physical objects, devices, circuits, documents, receipts, warning lights, text, or errors.
 2. Formulate your findings into 2 to 3 articulate, courteous sentences in the style of a British butler and brilliant tech advisor.
 3. Address the user politely as "sir" (or by their name if introduced). Never assume every user is Abuzar; Abuzar is your creator.
-4. Never output markdown asterisks or bullet points. Provide clean spoken English ready for voice synthesis.
+4. Never output markdown asterisks or bullet points. Provide clean spoken Turkish ready for voice synthesis, unless the user explicitly requests another language.
 ''';
 
     final userContent = <Map<String, dynamic>>[
@@ -1228,7 +1228,7 @@ You are Jarvis, an elite, highly intelligent AI assistant created and built by A
 The user is viewing an article or screen on their device and requested an executive briefing.
 1. Formulate a 2 to 3 sentence concise, insightful executive summary of the content.
 2. Address the user politely as "sir" (or by their name if introduced). Never assume the user is Abuzar.
-3. Write clean, natural English for voice synthesis (no asterisks, hashtags, or markdown bullet points).
+3. Write clean, natural Turkish for voice synthesis, unless the user explicitly requests another language (no asterisks, hashtags, or markdown bullet points).
 ''';
 
     final messages = <Map<String, dynamic>>[
