@@ -626,24 +626,24 @@ class PersonalityService extends ChangeNotifier {
     final hour = now.hour;
     final String timeGreeting;
     if (hour >= 5 && hour < 12) {
-      timeGreeting = 'Good morning';
+      timeGreeting = 'Günaydın';
     } else if (hour >= 12 && hour < 17) {
-      timeGreeting = 'Good afternoon';
+      timeGreeting = 'İyi günler';
     } else if (hour >= 17 && hour < 22) {
-      timeGreeting = 'Good evening';
+      timeGreeting = 'İyi akşamlar';
     } else {
-      timeGreeting = 'Hello';
+      timeGreeting = 'Merhaba';
     }
 
     final operatorName = getOperatorName();
-    final salutation = operatorName.isNotEmpty ? '$timeGreeting $operatorName' : '$timeGreeting, sir';
+    final salutation = operatorName.isNotEmpty ? '$timeGreeting $operatorName' : timeGreeting;
 
-    final dayName = DateFormat('EEEE').format(now);
-    final dateStr = DateFormat('MMMM d').format(now);
-    final timeStr = DateFormat('h:mm a').format(now);
+    final dayName = const ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'][now.weekday - 1];
+    final dateStr = '${now.day} ${const ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'][now.month - 1]}';
+    final timeStr = DateFormat('HH:mm').format(now);
 
     final parts = <String>[];
-    parts.add('$salutation. It is $timeStr on $dayName, $dateStr.');
+    parts.add('$salutation. Ben MAX. Bugün $dateStr $dayName, saat $timeStr.');
 
     // 1. Calendar / Meetings check
     try {
@@ -656,17 +656,17 @@ class PersonalityService extends ChangeNotifier {
 
       if (meetings.isNotEmpty) {
         final topMeeting = meetings.first;
-        final mTime = DateFormat('h:mm a').format(topMeeting.dateTime);
+        final mTime = DateFormat('HH:mm').format(topMeeting.dateTime);
         final title = topMeeting.title.trim();
         if (meetings.length == 1) {
-          parts.add('Today is your meeting with $title at $mTime.');
+          parts.add('Bugün saat $mTime için toplantın var: $title.');
         } else {
-          parts.add('You have ${meetings.length} meetings scheduled today, starting with $title at $mTime.');
+          parts.add('Bugün ${meetings.length} toplantın var. İlki saat $mTime: $title.');
         }
       } else if (calendarItems.isNotEmpty) {
         final topEvent = calendarItems.first;
-        final eTime = DateFormat('h:mm a').format(topEvent.dateTime);
-        parts.add('You have an upcoming event scheduled today: "${topEvent.title}" at $eTime.');
+        final eTime = DateFormat('HH:mm').format(topEvent.dateTime);
+        parts.add('Bugün saat $eTime için etkinliğin var: ${topEvent.title}.');
       }
     } catch (_) {}
 
@@ -677,20 +677,20 @@ class PersonalityService extends ChangeNotifier {
 
       if (pendingTodos.isNotEmpty) {
         final count = pendingTodos.length;
-        final topTasks = pendingTodos.take(2).map((t) => t.title).join(' and ');
+        final topTasks = pendingTodos.take(2).map((t) => t.title) .join(' ve ');
         if (count == 1) {
-          parts.add('There is one task left in your to-do list: $topTasks.');
+          parts.add('Yapılacak bir görevin kaldı: $topTasks.');
         } else {
-          parts.add('There are $count tasks left in your to-do list, including $topTasks.');
+          parts.add('Yapılacak $count görevin kaldı. Örneğin $topTasks.');
         }
-        parts.add('Would you like me to help with any of these, or anything else?');
+        parts.add('Nasıl yardımcı olabilirim?');
       } else if (parts.length > 1) {
-        parts.add('All other systems are nominal. How may I assist you?');
+        parts.add('Nasıl yardımcı olabilirim?');
       } else {
-        parts.add('All systems are operational and your agenda is completely clear. How may I be of service?');
+        parts.add('Bugün için kayıtlı başka bir görevin görünmüyor. Seni dinliyorum.');
       }
     } catch (_) {
-      parts.add('All systems are operational and ready. How may I assist you?');
+      parts.add('Seni dinliyorum.');
     }
 
     return parts.join(' ');
