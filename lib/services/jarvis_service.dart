@@ -93,10 +93,10 @@ class JarvisService extends ChangeNotifier {
   String _lastUserSpeech = '';
   String get lastUserSpeech => _lastUserSpeech;
 
-  String _lastJarvisSpeech = 'At your service, sir. Say "Hey Jarvis" anytime.';
+  String _lastJarvisSpeech = 'Merhaba, ben MAX. Hazırım.';
   String get lastJarvisSpeech => _lastJarvisSpeech;
 
-  String _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+  String _statusMessage = 'HAZIR // MERHABA MAX DE';
   String get statusMessage => _statusMessage;
 
   String? _currentTaskGoal;
@@ -171,7 +171,7 @@ class JarvisService extends ChangeNotifier {
       if (status == 'endOfSpeech') {
         if (_isAwake && _lastUserSpeech.isNotEmpty) {
           _speechSilenceTimer?.cancel();
-          _speechSilenceTimer = Timer(const Duration(milliseconds: 350), () {
+          _speechSilenceTimer = Timer(const Duration(milliseconds: 1200), () {
             final trimmed = _lastUserSpeech.trim();
             if (trimmed.isNotEmpty) {
               unawaited(_handleSpeechResult(trimmed));
@@ -246,7 +246,7 @@ class JarvisService extends ChangeNotifier {
       if (_phase != JarvisPhase.executing) {
         _isAwake = false;
         _statusMessage = _shouldListenContinuously
-            ? 'STANDBY // SAY "HEY JARVIS"'
+            ? 'HAZIR // MERHABA MAX DE'
             : 'READY // TAP TO TALK';
         notifyListeners();
       }
@@ -263,7 +263,7 @@ class JarvisService extends ChangeNotifier {
     _awakeTimer?.cancel();
     _lastUserSpeech = '';
     _statusMessage = _shouldListenContinuously
-        ? 'STANDBY // SAY "HEY JARVIS"'
+        ? 'HAZIR // MERHABA MAX DE'
         : 'READY // TAP TO TALK';
     _phase = JarvisPhase.idle;
     notifyListeners();
@@ -320,6 +320,9 @@ class JarvisService extends ChangeNotifier {
   /// - null if no wake word was spoken
   static String? extractWakeCommand(String speech) {
     final raw = speech.trim();
+    // MAX Turkish wake phrase. Keep legacy recognition for source compatibility.
+    final maxWake = RegExp(r'^(?:(?:merhaba|selam|hey)\s*,?\s+)?max(?:[\s,;:!?]+|$)', caseSensitive: false).firstMatch(raw);
+    if (maxWake != null) return raw.substring(maxWake.end).trim();
     if (raw.isEmpty) return null;
 
     // 1. Normalize acronyms, punctuation, and multiple spaces
@@ -409,9 +412,8 @@ class JarvisService extends ChangeNotifier {
     _isInJarvisMode = true;
     _standDown();
     startListening();
-    // Arm mid-air proximity sensor for zero-touch gestures while in JARVIS mode
-    unawaited(AirGestureService.instance.start());
-    _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+    // MAX: gesture control was not selected; do not automatically activate it.
+    _statusMessage = 'HAZIR // MERHABA MAX DE';
     notifyListeners();
   }
 
@@ -439,14 +441,14 @@ class JarvisService extends ChangeNotifier {
       _wakeUp();
       ensureAlwaysOnRunning();
       const msg =
-          'Always-On continuous listening active, sir. Say "Hey Jarvis" anytime.';
+          'Sürekli dinleme açık. Merhaba MAX diyebilirsin.';
       _lastJarvisSpeech = msg;
-      _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+      _statusMessage = 'HAZIR // MERHABA MAX DE';
       notifyListeners();
       await _voice.speak(msg);
     } else {
       stopAlwaysOn();
-      const msg = 'Always-On listening standby, sir.';
+      const msg = 'Sürekli dinleme kapalı.';
       _lastJarvisSpeech = msg;
       _statusMessage = 'READY // TAP TO TALK';
       notifyListeners();
@@ -584,7 +586,7 @@ class JarvisService extends ChangeNotifier {
       _statusMessage = 'LISTENING // AUDIO RECEPTORS ACTIVE';
     } else {
       _phase = JarvisPhase.idle;
-      _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+      _statusMessage = 'HAZIR // MERHABA MAX DE';
     }
     notifyListeners();
 
@@ -629,7 +631,7 @@ class JarvisService extends ChangeNotifier {
             candidates.any((c) => _extractWakeCommand(c) != null);
         if (_isAwake || hasWake) {
           _speechSilenceTimer?.cancel();
-          _speechSilenceTimer = Timer(const Duration(milliseconds: 950), () {
+          _speechSilenceTimer = Timer(const Duration(milliseconds: 1500), () {
             final trimmed = _lastUserSpeech.trim();
             if (trimmed.isNotEmpty) {
               debugPrint('[JarvisService] Silence debounce timer fired for: "$trimmed"');
@@ -648,7 +650,7 @@ class JarvisService extends ChangeNotifier {
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
                     ? 'LISTENING // AUDIO RECEPTORS ACTIVE'
-                    : 'STANDBY // SAY "HEY JARVIS"')
+                    : 'HAZIR // MERHABA MAX DE')
                 : 'READY // TAP TO TALK';
             notifyListeners();
           }
@@ -785,7 +787,7 @@ class JarvisService extends ChangeNotifier {
     if (_phase == JarvisPhase.listening) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'STANDBY // SAY "HEY JARVIS"'
+          ? 'HAZIR // MERHABA MAX DE'
           : 'READY // TAP TO TALK';
       notifyListeners();
     }
@@ -806,7 +808,7 @@ class JarvisService extends ChangeNotifier {
       await _voice.stopSpeaking();
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'STANDBY // SAY "HEY JARVIS"'
+          ? 'HAZIR // MERHABA MAX DE'
           : 'READY // TAP TO TALK';
       notifyListeners();
     }
@@ -827,7 +829,7 @@ class JarvisService extends ChangeNotifier {
     final lower = trimmed.toLowerCase();
 
     // 1. Fast cancel / abort check
-    if (lower == 'stop' ||
+    if (lower == 'dur' || lower == 'iptal et' || lower == 'stop' ||
         lower == 'cancel' ||
         lower == 'abort' ||
         lower.contains('stop task') ||
@@ -856,7 +858,7 @@ class JarvisService extends ChangeNotifier {
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
-          ? 'STANDBY // SAY "HEY JARVIS"'
+          ? 'HAZIR // MERHABA MAX DE'
           : 'READY // TAP TO TALK';
       notifyListeners();
       await _voice.speak(reply);
