@@ -69,9 +69,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
     if (entry == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Session')),
+        appBar: AppBar(title: const Text('Oturum')),
         body: Center(
-          child: Text('This session was deleted.',
+          child: Text('Bu oturum silindi.',
               style: theme.textTheme.bodyMedium),
         ),
       );
