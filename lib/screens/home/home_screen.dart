@@ -253,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ),
           IconButton(
-            tooltip: 'Settings',
+            tooltip: 'Ayarlar',
             icon: Icon(Icons.settings_outlined,
                 color: isJarvis ? const Color(0xFF00E5FF) : null),
             onPressed: () => Navigator.of(
@@ -378,7 +378,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             ListTile(
               leading: const Icon(Icons.checklist_outlined),
-              title: const Text('Tasks & To-Do', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              title: const Text('Görevler ve Yapılacaklar', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               subtitle: Text(
                 '${TodoService.instance.pendingItems.length} pending items',
                 style: const TextStyle(fontSize: 11),
@@ -390,7 +390,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             ListTile(
               leading: const Icon(Icons.calendar_month_outlined),
-              title: const Text('Calendar & Schedule', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              title: const Text('Takvim ve Planlama', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               subtitle: Text(
                 '${CalendarReminderService.instance.items.length} scheduled events',
                 style: const TextStyle(fontSize: 11),
@@ -402,7 +402,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             ListTile(
               leading: const Icon(Icons.menu_book_outlined),
-              title: const Text('Notes & Knowledge Base', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              title: const Text('Notlar ve Bilgi Bankası', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               subtitle: Text(
                 '${NotesKnowledgeService.instance.notes.length} notes stored',
                 style: const TextStyle(fontSize: 11),
@@ -414,7 +414,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             ListTile(
               leading: const Icon(Icons.alt_route_rounded, color: Color(0xFF00E5FF)),
-              title: const Text('Multi-Task Decoupler', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              title: const Text('Çoklu Görev Ayrıştırıcı', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               subtitle: const Text(
                 'Chaotic Brain Dump parallel engine',
                 style: TextStyle(fontSize: 11),
@@ -485,7 +485,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       ),
       trailing: IconButton(
-        tooltip: 'Delete session',
+        tooltip: 'Oturumu sil',
         icon: const Icon(Icons.delete_outline, size: 18),
         onPressed: () => _executor.deleteHistoryEntry(entry.id),
       ),
@@ -601,7 +601,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             IconButton(
-              tooltip: _executor.isPaused ? 'Resume' : 'Pause',
+              tooltip: _executor.isPaused ? 'Devam et' : 'Duraklat',
               icon: Icon(
                 _executor.isPaused
                     ? Icons.play_arrow_rounded
@@ -611,7 +611,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _executor.isPaused ? _executor.resume() : _executor.pause(),
             ),
             IconButton(
-              tooltip: 'Cancel task',
+              tooltip: 'Görevi iptal et',
               icon: const Icon(Icons.stop_rounded, color: AppTheme.danger),
               onPressed: _executor.cancel,
             ),
@@ -799,7 +799,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     const SizedBox(width: 4),
                     IconButton(
-                      tooltip: 'Voice input',
+                      tooltip: 'Sesli giriş',
                       onPressed: _busy ? null : _toggleListening,
                       icon: Icon(
                         _listening ? Icons.mic : Icons.mic_none_rounded,
@@ -825,7 +825,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ),
                       child: IconButton(
-                        tooltip: isAgent ? 'Run task' : 'Send',
+                        tooltip: isAgent ? 'Görevi çalıştır' : 'Gönder',
                         onPressed: _busy ? null : () => _submit(_inputController.text),
                         icon: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
                         padding: const EdgeInsets.all(8),
@@ -906,7 +906,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 proactive.dismissSuggestion();
                 _submit(goal);
               },
-              child: const Text('Execute', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+              child: const Text('Çalıştır', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 4),
             IconButton(
@@ -1023,7 +1023,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ? const Center(
                               child: Padding(
                                 padding: EdgeInsets.all(24),
-                                child: Text('No tasks created yet.'),
+                                child: Text('Henüz görev oluşturulmadı.'),
                               ),
                             )
                           : ListView.builder(
@@ -1161,7 +1161,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
                         icon: const Icon(Icons.open_in_new, size: 16),
-                        label: const Text('Open Native Calendar', style: TextStyle(fontSize: 12)),
+                        label: const Text('Telefon takvimini aç', style: TextStyle(fontSize: 12)),
                         onPressed: () async {
                           await calendar.openNativeCalendarInsert(
                             title: 'New Schedule',
@@ -1179,7 +1179,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ? const Center(
                               child: Padding(
                                 padding: EdgeInsets.all(24),
-                                child: Text('No events scheduled.'),
+                                child: Text('Planlanmış etkinlik yok.'),
                               ),
                             )
                           : ListView.builder(
@@ -1285,7 +1285,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         const SizedBox(width: 8),
                         IconButton.filled(
                           icon: const Icon(Icons.note_add_outlined, size: 20),
-                          tooltip: 'New note',
+                          tooltip: 'Yeni not',
                           onPressed: () => _createNoteDialog(context, () {
                             setModalState(() {});
                             setState(() {});
@@ -1302,7 +1302,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ? const Center(
                               child: Padding(
                                 padding: EdgeInsets.all(24),
-                                child: Text('No notes found.'),
+                                child: Text('Not bulunamadı.'),
                               ),
                             )
                           : ListView.builder(
@@ -1351,7 +1351,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('New Note'),
+        title: const Text('Yeni Not'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1370,7 +1370,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
+            child: const Text('İptal'),
           ),
           FilledButton(
             onPressed: () async {
@@ -1385,7 +1385,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 onSaved();
               }
             },
-            child: const Text('Save Note'),
+            child: const Text('Notu Kaydet'),
           ),
         ],
       ),
