@@ -83,7 +83,7 @@ class _AirGesturesHudWidgetState extends State<AirGesturesHudWidget>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'IRON MAN AIR GESTURES',
+                              'IRON MAN EL HAREKETLERİ',
                               style: TextStyle(
                                 color: cyan,
                                 fontFamily: 'monospace',
@@ -93,7 +93,7 @@ class _AirGesturesHudWidgetState extends State<AirGesturesHudWidget>
                               ),
                             ),
                             Text(
-                              isArmed ? 'OPTICAL PROXIMITY ACTIVE' : 'SENSORS STANDBY',
+                              isArmed ? 'OPTİK YAKINLIK SENSÖRÜ AÇIK' : 'SENSÖRLER BEKLEMEDE',
                               style: TextStyle(
                                 color: isArmed ? const Color(0xFF00E676) : Colors.white54,
                                 fontFamily: 'monospace',
@@ -179,11 +179,11 @@ class _AirGesturesHudWidgetState extends State<AirGesturesHudWidget>
                   const SizedBox(height: 18),
 
                   // Gestures Reference Grid
-                  _gestureRow('👋 Quick Wave / Swipe', 'Next Track / Skip Song'),
+                  _gestureRow('👋 Hızlı el hareketi', 'Sonraki parça'),
                   const SizedBox(height: 8),
-                  _gestureRow('✋ Palm Hover (1-2s)', 'Play / Pause Music'),
+                  _gestureRow('✋ Avucu beklet (1-2 sn)', 'Müziği oynat / duraklat'),
                   const SizedBox(height: 8),
-                  _gestureRow('✌️ Double Wave', 'Capture Instant Screenshot'),
+                  _gestureRow('✌️ İki kez el salla', 'Ekran görüntüsü al'),
 
                   const SizedBox(height: 20),
 
@@ -193,9 +193,9 @@ class _AirGesturesHudWidgetState extends State<AirGesturesHudWidget>
                     runSpacing: 8,
                     alignment: WrapAlignment.center,
                     children: [
-                      _simButton('Test Wave', () => _service.simulateGesture('wave')),
-                      _simButton('Test Hover', () => _service.simulateGesture('palm_hover')),
-                      _simButton('Test Double', () => _service.simulateGesture('double_wave')),
+                      _simButton('Hareketi test et', () => _service.simulateGesture('wave')),
+                      _simButton('Bekletmeyi test et', () => _service.simulateGesture('palm_hover')),
+                      _simButton('Çift hareketi test et', () => _service.simulateGesture('double_wave')),
                     ],
                   ),
 
@@ -225,7 +225,7 @@ class _AirGesturesHudWidgetState extends State<AirGesturesHudWidget>
                       },
                       icon: Icon(isArmed ? Icons.power_settings_new : Icons.sensors),
                       label: Text(
-                        isArmed ? 'DISARM AIR SENSORS' : 'ARM AIR SENSORS',
+                        isArmed ? 'EL SENSÖRLERİNİ KAPAT' : 'EL SENSÖRLERİNİ AÇ',
                         style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 12,
