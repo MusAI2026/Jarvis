@@ -79,7 +79,7 @@ class _ArcReactorChargingDialogState extends State<ArcReactorChargingDialog>
                           const Icon(Icons.bolt, color: gold, size: 24),
                           const SizedBox(width: 8),
                           const Text(
-                            'ARC REACTOR TELEMETRY',
+                            'ARC REAKTÖRÜ TELEMETRİSİ',
                             style: TextStyle(
                               color: cyan,
                               fontFamily: 'monospace',
@@ -188,7 +188,7 @@ class _ArcReactorChargingDialogState extends State<ArcReactorChargingDialog>
                                       ),
                                     ),
                                     const Text(
-                                      'CORE',
+                                      'ÇEKİRDEK',
                                       style: TextStyle(
                                         color: cyan,
                                         fontFamily: 'monospace',
@@ -212,9 +212,9 @@ class _ArcReactorChargingDialogState extends State<ArcReactorChargingDialog>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _telemetryCard('RATE', '${watt.toStringAsFixed(1)} W', Icons.speed),
-                      _telemetryCard('VOLTAGE', '${volt.toStringAsFixed(2)} V', Icons.electric_meter),
-                      _telemetryCard('THERMALS', '${temp.toStringAsFixed(1)}°C', Icons.thermostat),
+                      _telemetryCard('GÜÇ', '${watt.toStringAsFixed(1)} W', Icons.speed),
+                      _telemetryCard('GERİLİM', '${volt.toStringAsFixed(2)} V', Icons.electric_meter),
+                      _telemetryCard('SICAKLIK', '${temp.toStringAsFixed(1)}°C', Icons.thermostat),
                     ],
                   ),
 
@@ -233,7 +233,7 @@ class _ArcReactorChargingDialogState extends State<ArcReactorChargingDialog>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          'GRID COUPLING',
+                          'ŞEBEKE BAĞLANTISI',
                           style: TextStyle(
                             color: Colors.white70,
                             fontFamily: 'monospace',
