@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PrivateAgent</string>
-    <string name="accessibility_service_label">PrivateAgent Screen Control</string>
-    <string name="accessibility_service_description">PrivateAgent uses this service to read the current screen layout and perform taps, swipes, scrolling and typing on your behalf when you ask it to automate a task. No screen content leaves your device except when sent to the AI provider you configured. Disable this service at any time to stop all automation.</string>
+    <string name="app_name">JARVIS TR</string>
+    <string name="accessibility_service_label">JARVIS Ekran Kontrolü</string>
+    <string name="accessibility_service_description">JARVIS, bir görevi otomatikleştirmenizi istediğinizde ekran düzenini okumak ve sizin adınıza dokunmak, kaydırmak ve yazı yazmak için bu hizmeti kullanır. Ekran içeriği, yapılandırdığınız yapay zekâ sağlayıcısına gönderildiği durumlar dışında cihazınızdan çıkmaz. Tüm otomasyonu durdurmak için bu hizmeti istediğiniz zaman devre dışı bırakabilirsiniz.</string>
 </resources>
