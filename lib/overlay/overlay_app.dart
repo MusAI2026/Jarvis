@@ -40,9 +40,9 @@ class _OverlayAppState extends State<OverlayApp>
 
   // JARVIS Real-Time Phase State
   String _jarvisPhase = 'idle'; // 'idle', 'listening', 'thinking', 'speaking', 'executing'
-  String _jarvisStatus = 'STANDBY // SAY "HEY JARVIS"';
+  String _jarvisStatus = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
   String? _screenSummary;
-  String _summaryTitle = 'Screen Article Summary';
+  String _summaryTitle = 'Ekrandaki makalenin özeti';
 
   bool get _busy =>
       _jarvisPhase == 'thinking' ||
@@ -93,7 +93,7 @@ class _OverlayAppState extends State<OverlayApp>
       } else if (type == 'screen_summary') {
         setState(() {
           _screenSummary = decoded['summary']?.toString();
-          _summaryTitle = decoded['title']?.toString() ?? 'Screen Article Summary';
+          _summaryTitle = decoded['title']?.toString() ?? 'Ekrandaki makalenin özeti';
         });
         if (!_expanded) {
           _expand();
@@ -294,7 +294,7 @@ class _OverlayAppState extends State<OverlayApp>
         ),
         IconButton(
           visualDensity: VisualDensity.compact,
-          tooltip: 'Close',
+          tooltip: 'Kapat',
           icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
           onPressed: _collapse,
         ),
@@ -356,7 +356,7 @@ class _OverlayAppState extends State<OverlayApp>
                     padding: const EdgeInsets.symmetric(vertical: 6),
                   ),
                   icon: const Icon(Icons.refresh, size: 14),
-                  label: const Text('Rescan', style: TextStyle(fontSize: 11)),
+                  label: const Text('Yeniden tara', style: TextStyle(fontSize: 11)),
                   onPressed: () => _sendCommand({'command': 'summarize_screen'}),
                 ),
               ),
@@ -371,7 +371,7 @@ class _OverlayAppState extends State<OverlayApp>
                     elevation: 0,
                   ),
                   icon: const Icon(Icons.volume_up, size: 14),
-                  label: const Text('Read Aloud', style: TextStyle(fontSize: 11)),
+                  label: const Text('Sesli oku', style: TextStyle(fontSize: 11)),
                   onPressed: () {
                     if (_screenSummary != null) {
                       _sendCommand({'command': 'jarvis_command', 'goal': 'speak ${_screenSummary!}'});
@@ -402,7 +402,7 @@ class _OverlayAppState extends State<OverlayApp>
           ),
           const SizedBox(height: 12),
           const Text(
-            'Screen Article Summarizer',
+            'Ekran makale özetleyici',
             style: TextStyle(
               color: Colors.white,
               fontSize: 13,
@@ -411,7 +411,7 @@ class _OverlayAppState extends State<OverlayApp>
           ),
           const SizedBox(height: 4),
           const Text(
-            'Open any article or browser page,\nthen tap below for an executive summary.',
+            'Bir makale veya tarayıcı sayfası açın,\nözet için aşağıya dokunun.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white54, fontSize: 10.5, height: 1.4),
           ),
@@ -425,7 +425,7 @@ class _OverlayAppState extends State<OverlayApp>
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             icon: const Icon(Icons.bolt, size: 16),
-            label: const Text('Summarize Current Screen', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            label: const Text('Mevcut ekranı özetle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             onPressed: () => _sendCommand({'command': 'summarize_screen'}),
           ),
         ],
