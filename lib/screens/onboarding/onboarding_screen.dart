@@ -124,12 +124,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         duration: const Duration(milliseconds: 300),
                         curve: Curves.easeOutCubic,
                       ),
-                      child: const Text('Back'),
+                      child: const Text('Geri'),
                     ),
                   const Spacer(),
                   FilledButton(
                     onPressed: _next,
-                    child: Text(_page == 3 ? 'Get Started' : 'Continue'),
+                    child: Text(_page == 3 ? 'Başla' : 'Devam et'),
                   ),
                 ],
               ),
@@ -177,40 +177,40 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.shield_outlined,
-      title: 'Meet J.A.R.V.I.S.',
-      subtitle: 'Your next-generation Stark autonomous AI companion & phone co-pilot. '
-          'Voice-first intelligence, mid-air air gestures, live charging telemetry, '
+      title: 'J.A.R.V.I.S. ile tanışın',
+      subtitle: 'Yeni nesil Stark yapay zekâ asistanınız ve telefon yardımcınız. '
+          'Sesli etkileşim, temassız el hareketleri, canlı şarj verileri, '
           'and autonomous device automation.',
       children: [
         _featureRow(
           theme,
           Icons.record_voice_over_rounded,
-          'Hands-Free Voice Intelligence',
-          'Speak naturally with British neural voice, daily calendar & agenda briefings, and full phone actions.',
+          'Eller serbest sesli asistan',
+          'Türkçe doğal ses, günlük takvim ve gündem özetleri ile telefon kontrolü.',
         ),
         _featureRow(
           theme,
           Icons.pan_tool_rounded,
-          'Iron Man Zero-Touch Air Gestures',
-          'Wave your hand in mid-air to skip music, hover to pause/play, or double-wave to capture screenshots.',
+          'Iron Man temassız el hareketleri',
+          'Müzik değiştirmek için elinizi sallayın, duraklatmak veya oynatmak için bekletin, ekran görüntüsü için iki kez sallayın.',
         ),
         _featureRow(
           theme,
           Icons.view_in_ar_rounded,
-          'Dual 3D Hologram HUD',
-          'Switch between the spinning Arc Reactor core and the 3D Iron Man hologram suit with reactive color shifts.',
+          'Çift 3B hologram ekranı',
+          'Dönen Arc Reaktörü ve renklere tepki veren 3B Iron Man hologramı arasında geçiş yapın.',
         ),
         _featureRow(
           theme,
           Icons.security_rounded,
-          'Cyber Defense & Sentry Mode',
-          'Tactical anti-theft watchdog siren, Code Black emergency lockout, Wi-Fi device audit, and airspace radar.',
+          'Siber savunma ve nöbetçi modu',
+          'Hırsızlığa karşı alarm, Code Black acil kilit, Wi-Fi cihaz denetimi ve hava sahası radarı.',
         ),
         _featureRow(
           theme,
           Icons.translate_rounded,
-          'Polyglot Diplomat & Optical Solver',
-          'Real-time spoken translation across 14+ languages and camera HUD solver for equations, code, and bills.',
+          'Canlı çeviri ve optik çözümleyici',
+          '14 ve üzeri dilde canlı sesli çeviri; denklem, kod ve hesaplar için kamera çözümleyicisi.',
         ),
       ],
     );
@@ -275,9 +275,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.accessibility_new_outlined,
-      title: 'Enable screen control',
-      subtitle: 'PrivateAgent works through an Android accessibility service. '
-          'This is what lets it read the screen and tap buttons for you.',
+      title: 'Ekran kontrolünü etkinleştir',
+      subtitle: 'JARVIS, Android erişilebilirlik hizmetini kullanır. '
+          'Böylece ekranı okuyabilir ve sizin için düğmelere dokunabilir.',
       children: [
         Card(
           child: Padding(
@@ -295,14 +295,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 Expanded(
                   child: Text(
                     _serviceEnabled
-                        ? 'PrivateAgent Screen Control is enabled'
-                        : 'PrivateAgent Screen Control is OFF',
+                        ? 'JARVIS ekran kontrolü açık'
+                        : 'JARVIS ekran kontrolü kapalı',
                     style: theme.textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Re-check',
+                  tooltip: 'Tekrar kontrol et',
                   onPressed: _refreshServiceState,
                   icon: const Icon(Icons.refresh),
                 ),
@@ -314,13 +314,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         FilledButton.icon(
           onPressed: () => _automation.openAccessibilitySettings(),
           icon: const Icon(Icons.settings_accessibility),
-          label: const Text('Open Accessibility Settings'),
+          label: const Text('Erişilebilirlik ayarlarını aç'),
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: () => _automation.openAppInfoSettings(),
           icon: const Icon(Icons.info_outline),
-          label: const Text('Open App Info (Android 13+ restricted settings)'),
+          label: const Text('Uygulama bilgilerini aç (Android 13+ kısıtlı ayarlar)'),
         ),
         const SizedBox(height: 16),
         Text(
@@ -337,9 +337,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.key_outlined,
-      title: 'Connect an AI brain',
-      subtitle: 'Pick an OpenAI-compatible provider and paste your API key. '
-          'You can change this any time in Settings.',
+      title: 'Yapay zekâya bağlan',
+      subtitle: 'OpenAI uyumlu sağlayıcı seçin ve API anahtarınızı yapıştırın. '
+          'Bunu istediğiniz zaman Ayarlar bölümünden değiştirebilirsiniz.',
       children: [
         Wrap(
           spacing: 8,
@@ -373,7 +373,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           obscureText: true,
           onChanged: (v) => _settings.setApiKey(v),
           decoration: const InputDecoration(
-            labelText: 'API key',
+            labelText: 'API anahtarı',
             hintText: 'sk-…',
             prefixIcon: Icon(Icons.vpn_key_outlined),
           ),
@@ -393,15 +393,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.verified_user_outlined,
-      title: 'Optional permissions',
+      title: 'İsteğe bağlı izinler',
       subtitle: 'These unlock voice commands, the floating bubble, '
           'notifications and contact search. Skip anything you don\'t need.',
       children: [
         _permissionTile(
           theme,
           icon: Icons.mic_none,
-          title: 'Microphone',
-          subtitle: 'Speak tasks instead of typing them',
+          title: 'Mikrofon',
+          subtitle: 'Görevleri yazmak yerine söyleyin',
           onTap: () async {
           await Permission.microphone.request();
         },
@@ -409,8 +409,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _permissionTile(
           theme,
           icon: Icons.notifications_none,
-          title: 'Notifications',
-          subtitle: 'Task progress and completion alerts',
+          title: 'Bildirimler',
+          subtitle: 'Görev ilerlemesi ve tamamlanma bildirimleri',
           onTap: () async {
             await Permission.notification.request();
           },
@@ -418,8 +418,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _permissionTile(
           theme,
           icon: Icons.contacts_outlined,
-          title: 'Contacts',
-          subtitle: '“Call Mom”-style commands',
+          title: 'Kişiler',
+          subtitle: '“Annemi ara” gibi komutlar',
           onTap: () async {
             await Permission.contacts.request();
           },
@@ -427,8 +427,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _permissionTile(
           theme,
           icon: Icons.bubble_chart_outlined,
-          title: 'Floating bubble',
-          subtitle: 'Control the agent while using other apps',
+          title: 'Yüzen asistan',
+          subtitle: 'Diğer uygulamaları kullanırken asistanı kontrol edin',
           onTap: () async {
             await FlutterOverlayWindow.requestPermission();
           },
