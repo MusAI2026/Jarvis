@@ -113,7 +113,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'MULTI-TASK DECOUPLER',
+                              'ÇOKLU GÖREV AYRIŞTIRICI',
                               style: TextStyle(
                                 color: cyan,
                                 fontSize: 13.5,
@@ -123,7 +123,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                               ),
                             ),
                             Text(
-                              'Chaotic Brain Dump Parallel Engine',
+                              'Paralel görev işleme motoru',
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.6),
                                 fontSize: 10.5,
@@ -163,7 +163,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                             minLines: 2,
                             decoration: InputDecoration(
                               hintText:
-                                  'Dictate or type multiple requests...\ne.g. "Remind me to call Elon at 5 and note AI thoughts and calculate 18% of 500 and turn on flashlight"',
+                                  'Birden fazla isteği söyleyin veya yazın...\nÖrnek: "Saat 5 için hatırlatma kur, not al, 500 sayısının yüzde 18 değerini hesapla ve feneri aç"',
                               hintStyle: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.35),
                                 fontSize: 11.5,
@@ -200,8 +200,8 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                         : const Icon(Icons.bolt, size: 16),
                     label: Text(
                       isProcessing
-                          ? 'DECONSTRUCTING INTENTS...'
-                          : 'EXECUTE PARALLEL DECOUPLING',
+                          ? 'İSTEKLER AYRIŞTIRILIYOR...'
+                          : 'GÖREVLERİ PARALEL ÇALIŞTIR',
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
@@ -225,7 +225,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'PARALLEL DISPATCH LEDGER (${tasks.length})',
+                        'PARALEL GÖREV KAYDI (${tasks.length})',
                         style: TextStyle(
                           color: cyan.withValues(alpha: 0.8),
                           fontSize: 10,
@@ -253,7 +253,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                     child: tasks.isEmpty
                         ? Center(
                             child: Text(
-                              'No active decoupled tasks.\nEnter multiple compound tasks above or say\n"Hey Jarvis, brain dump..."',
+                              'Etkin görev yok.\nYukarıya birden fazla görev girin veya\n"Merhaba Jarvis, çoklu görev" deyin.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.3),
