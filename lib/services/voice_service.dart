@@ -98,6 +98,12 @@ class VoiceService {
   Future<void> initTts({String? voiceProfile}) async {
     final profile = voiceProfile ?? SettingsService.instance.jarvisVoice;
     try {
+      if (voiceProfile == null) {
+        // Main MAX offline fallback uses installed Turkish Android TTS.
+        await _tts.setLanguage('tr-TR');
+        await _tts.setPitch(1.0);
+        await _tts.setSpeechRate(0.5);
+      } else {
       switch (profile) {
         case 'friday':
           await _tts.setLanguage('en-IE');
@@ -152,6 +158,8 @@ class VoiceService {
           break;
       }
 
+      }
+
       await _tts.awaitSpeakCompletion(true);
 
       _tts.setStartHandler(() {
@@ -179,7 +187,7 @@ class VoiceService {
       _ttsReady = true;
     } catch (_) {
       try {
-        await _tts.setLanguage('en-US');
+        await _tts.setLanguage('tr-TR');
         _ttsReady = true;
       } catch (_) {
         _ttsReady = false;
