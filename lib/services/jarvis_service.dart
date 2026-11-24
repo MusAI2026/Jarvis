@@ -536,6 +536,7422 @@ class JarvisService extends ChangeNotifier {
   static bool isAffirmativeResponse(String input) {
     final lower = input.trim().toLowerCase();
     final patterns = [
+      r'^(evet|tamam|olur|peki|onaylıyorum|onayla)[.! ]*yeah|yep|yup|sure|please|do\s+it|turn\s+it\s+on|turn\s+on|engage|activate|ok|okay|go\s+ahead|proceed|definitely|affirmative|sounds\s+good|why\s+not|let\x27s\s+do\s+it)\b',
+    ];
+    for (final pattern in patterns) {
+      if (RegExp(pattern, caseSensitive: false).hasMatch(lower)) return true;
+    }
+    return false;
+  }
+
+  /// Checks if spoken response is a negative dismissal.
+  static bool isNegativeResponse(String input) {
+    final lower = input.trim().toLowerCase();
+    final patterns = [
+      r'^(hayır|hayir|istemiyorum|vazgeç|iptal|şimdi değil|sonra)[.! ]*nope|nah|not\s+now|never\s+mind|nevermind|don\x27t|cancel|later|dismiss|leave\s+it|negative|stop|skip)\b',
+    ];
+    for (final pattern in patterns) {
+      if (RegExp(pattern, caseSensitive: false).hasMatch(lower)) return true;
+    }
+    return false;
+  }
+
+  /// Toggles speech recognition manually via the UI.
+  Future<void> toggleListening() async {
+    if (_phase == JarvisPhase.listening) {
+      await stopListening();
+      if (_shouldListenContinuously) {
+        _standDown();
+        await startListening();
+      }
+    } else {
+      _wakeUp();
+      await startListening(manual: true);
+    }
+  }
+
+  /// Begins recording voice input.
+  Future<bool> startListening({bool manual = false}) async {
+    await _voice.stopSpeaking();
+
+    if (manual) {
+      _wakeUp();
+    }
+
+    // Google Home / Google Assistant Architecture:
+    // Only set phase to listening if awake or manual tap.
+    // In passive standby background waiting for wake-word, stay in idle so UI is calm and does NOT flicker!
+    if (_isAwake || !_shouldListenContinuously) {
+      _phase = JarvisPhase.listening;
+      _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+    } else {
+      _phase = JarvisPhase.idle;
+      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+    }
+    notifyListeners();
+
+    final started = await _voice.startListening(
+      continuous: _shouldListenContinuously,
+      manual: manual,
+      onResult: (words, isFinal, candidates) {
+        _lastUserSpeech = words;
+        debugPrint('[JarvisService] Heard: "$words" (candidates: $candidates, isFinal: $isFinal, isAwake: $_isAwake)');
+
+        // Immediate wake detection on partial speech stream
+        if (_shouldListenContinuously && !_isAwake) {
+          String? wakeCmd = _extractWakeCommand(words);
+          if (wakeCmd == null) {
+            for (final cand in candidates) {
+              final cCmd = _extractWakeCommand(cand);
+              if (cCmd != null) {
+                wakeCmd = cCmd;
+                break;
+              }
+            }
+          }
+          if (wakeCmd != null) {
+            _wakeUp();
+            onWakeWordTriggered?.call();
+            HapticFeedback.mediumImpact();
+
+            // Set visual listening state immediately, but NEVER cut off the user!
+            // Let the user finish speaking their full command until silence / isFinal.
+            _phase = JarvisPhase.listening;
+            _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+            notifyListeners();
+          }
+        } else if (_isAwake) {
+          notifyListeners();
+        }
+
+        // Voice Activity / Silence Debounce Timer:
+        // When awake or wake-word is present, whenever user stops speaking (silence for ~950ms),
+        // automatically trigger command processing so the user never gets stuck waiting on Android's silence detector!
+        final hasWake = _extractWakeCommand(words) != null ||
+            candidates.any((c) => _extractWakeCommand(c) != null);
+        if (_isAwake || hasWake) {
+          _speechSilenceTimer?.cancel();
+          _speechSilenceTimer = Timer(const Duration(milliseconds: 950), () {
+            final trimmed = _lastUserSpeech.trim();
+            if (trimmed.isNotEmpty) {
+              debugPrint('[JarvisService] Silence debounce timer fired for: "$trimmed"');
+              unawaited(_handleSpeechResult(trimmed, candidates));
+            }
+          });
+        }
+
+        if (isFinal) {
+          _speechSilenceTimer?.cancel();
+          final trimmed = words.trim();
+          if (trimmed.isNotEmpty) {
+            unawaited(_handleSpeechResult(trimmed, candidates));
+          } else {
+            _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+            _statusMessage = _shouldListenContinuously
+                ? (_isAwake
+                    ? 'DİNLİYOR // MİKROFON AÇIK'
+                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+            notifyListeners();
+          }
+        }
+      },
+    );
+
+    if (!started) {
+      _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+      _statusMessage = 'MİKROFON KULLANILAMIYOR';
+      notifyListeners();
+    }
+    return started;
+  }
+
+  /// Handles incoming speech results, applying wake-word filtering in continuous mode.
+  Future<void> _handleSpeechResult(String speech, [List<String>? candidates]) async {
+    _speechSilenceTimer?.cancel();
+
+    // Guard against duplicate execution while already busy
+    if (_phase == JarvisPhase.thinking ||
+        _phase == JarvisPhase.executing ||
+        _phase == JarvisPhase.speaking) {
+      return;
+    }
+
+    final trimmed = speech.trim();
+    if (trimmed.isEmpty) return;
+
+    _followUpSilenceTimer?.cancel();
+    _isInFollowUp = false;
+
+    _lastUserSpeech = '';
+    debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
+
+    // Proactive conversational confirmation check:
+    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
+    if (_pendingProactiveSuggestion != null) {
+      final suggestion = _pendingProactiveSuggestion!;
+      _pendingProactiveSuggestion = null;
+      _proactiveConfirmationTimer?.cancel();
+
+      final answer = trimmed.toLowerCase();
+      final isAffirmative = isAffirmativeResponse(answer);
+      final isNegative = isNegativeResponse(answer);
+
+      debugPrint('[JarvisService] Proactive response: "$answer" (yes: $isAffirmative, no: $isNegative)');
+
+      if (isAffirmative) {
+        _wakeUp();
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CONFIRMED // ENGAGING ${suggestion.title.toUpperCase()}';
+        notifyListeners();
+
+        const ack = 'Hemen efendim. İşlemi başlatıyorum.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(ack);
+
+        await processCommand(suggestion.actionGoal);
+        return;
+      } else if (isNegative) {
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'İPTAL // BEKLEMEDE';
+        const ack = 'Anladım efendim. Beklemedeyim.';
+        _lastJarvisSpeech = ack;
+        notifyListeners();
+        await _voice.speak(ack);
+        _standDown();
+        return;
+      }
+    }
+
+    // 1. If continuous listening is NOT active (user explicitly pressed talk button in Agent/Chat mode):
+    if (!_shouldListenContinuously) {
+      _wakeUp();
+      await processCommand(trimmed);
+      return;
+    }
+
+    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    var wakeCommand = _extractWakeCommand(trimmed);
+    if (wakeCommand == null && candidates != null) {
+      for (final cand in candidates) {
+        final cCmd = _extractWakeCommand(cand);
+        if (cCmd != null) {
+          wakeCommand = cCmd;
+          break;
+        }
+      }
+    }
+
+    if (wakeCommand != null) {
+      _wakeUp();
+      onWakeWordTriggered?.call();
+      HapticFeedback.mediumImpact();
+
+      if (wakeCommand.isEmpty) {
+        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        _wakeUp();
+        _phase = JarvisPhase.listening;
+        _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+        notifyListeners();
+        return;
+      } else {
+        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        await processCommand(wakeCommand);
+        return;
+      }
+    }
+
+    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // Execute direct follow-up commands!
+    if (_isAwake) {
+      await processCommand(trimmed);
+      return;
+    }
+
+    // 4. In background standby mode, user spoke WITHOUT wake word:
+    // (e.g. talking to a friend on the desk):
+    // COMPLETELY IGNORE ambient chatter to never interrupt room conversation!
+    debugPrint('[JarvisService] Ambient conversation ignored: "$trimmed"');
+    _standDown();
+  }
+
+  /// Stops voice input.
+  Future<void> stopListening() async {
+    _followUpSilenceTimer?.cancel();
+    _isInFollowUp = false;
+    _speechSilenceTimer?.cancel();
+    await _voice.stopListening();
+    if (_phase == JarvisPhase.listening) {
+      _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+    }
+  }
+
+  /// Aborts any running task immediately.
+  Future<void> abortTask() async {
+    _standDown();
+    if (_executor.isBusy) {
+      _executor.cancel();
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'GÖREV İPTAL EDİLDİ // BEKLEMEDE';
+      const speech = 'Görevi hemen iptal ediyorum efendim.';
+      _lastJarvisSpeech = speech;
+      notifyListeners();
+      await _voice.speak(speech);
+    } else {
+      await _voice.stopSpeaking();
+      _phase = JarvisPhase.idle;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+    }
+  }
+
+  /// Processes a voice command through JARVIS intelligence.
+  Future<void> processCommand(String command) async {
+    _wakeUp();
+
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return;
+
+    _lastUserSpeech = trimmed;
+    _phase = JarvisPhase.thinking;
+    _statusMessage = 'DÜŞÜNÜYOR // KOMUT İNCELENİYOR';
+    notifyListeners();
+
+    final lower = trimmed.toLowerCase();
+
+    // 1. Fast cancel / abort check
+    if (lower == 'dur' ||
+        lower == 'sus' ||
+        lower == 'iptal' ||
+        lower == 'görevi iptal et' ||
+        lower == 'stop' ||
+        lower == 'cancel' ||
+        lower == 'abort' ||
+        lower.contains('stop task') ||
+        lower.contains('cancel task')) {
+      await abortTask();
+      return;
+    }
+
+    // 2. Stand down / Sleep commands
+    if (lower == 'uyku moduna geç' ||
+        lower == 'beklemeye geç' ||
+        lower == 'iyi geceler' ||
+        lower == 'stand down' ||
+        lower == 'go to sleep' ||
+        lower == 'sleep' ||
+        lower == 'goodnight' ||
+        lower == 'thank you' ||
+        lower == 'thanks' ||
+        lower == 'no thanks' ||
+        lower == 'no thank you' ||
+        lower == 'that will be all' ||
+        lower == "that's all" ||
+        lower == 'that is all' ||
+        lower == "i'm good" ||
+        lower == 'im good') {
+      _standDown();
+      await _voice.stopListening();
+      final reply = PersonalityService.instance.getStandDown();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 2b. Autonomous Form Filling (USER.md + Long-Term Memory)
+    if (lower.contains('fill this form') ||
+        lower.contains('fill the form') ||
+        lower.contains('fill form') ||
+        lower.contains('fill out this form') ||
+        lower.contains('autofill this form') ||
+        lower.contains('autofill form') ||
+        lower.contains('fill my details') ||
+        lower.contains('fill my info') ||
+        lower.contains('fill my information')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'FORM DOLDURMA // ALANLAR İNCELENİYOR';
+      notifyListeners();
+
+      final result = await FormFillingService.instance.fillActiveForm();
+      _lastJarvisSpeech = result;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'FORM DOLDURMA TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(result);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3. Hands-Free Always-On toggle commands
+    if (lower == 'sürekli dinlemeyi aç' ||
+        lower == 'eller serbest' ||
+        lower == 'always on' ||
+        lower == 'activate always on' ||
+        lower == 'hands free' ||
+        lower == 'continuous listening' ||
+        lower == 'turn on always on' ||
+        lower == 'enable always on') {
+      await SettingsService.instance.setJarvisAlwaysOn(true);
+      ensureAlwaysOnRunning();
+      const reply = 'Sürekli dinleme etkinleştirildi efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SÜREKLİ DİNLEME AÇIK';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    if (lower == 'sürekli dinlemeyi kapat' ||
+        lower == 'turn off always on' ||
+        lower == 'disable always on' ||
+        lower == 'deactivate always on' ||
+        lower == 'stop always on') {
+      await SettingsService.instance.setJarvisAlwaysOn(false);
+      stopAlwaysOn();
+      const reply = 'Sürekli dinleme kapatıldı efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 3b. Hermes Self-Evolution triggers
+    if (lower == 'kendini geliştir' ||
+        lower == 'hafızanı güncelle' ||
+        lower == 'self evolve' ||
+        lower == 'evolve context' ||
+        lower == 'run self evolution' ||
+        lower == 'hermes evolution' ||
+        lower == 'evolve yourself' ||
+        lower == 'update your protocols' ||
+        lower == 'evolve memory') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HERMES BAĞLAMI HAZIRLANIYOR';
+      notifyListeners();
+      await HermesEvolutionService.instance.evolveContext();
+      final factsCount = ConversationalMemoryService.instance.facts.length;
+      final workflowCount = WorkflowService.instance.workflows.length;
+      final reply =
+          'Hermes güncellemesi tamamlandı efendim. SOUL.md, USER.md ve AGENT.md dosyalarında $factsCount hafıza bilgisi ve $workflowCount etkin protokol işlendi.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'KENDİNİ GELİŞTİRME TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3c. Interactive Multi-Task Decoupler Dialog
+    if (lower == 'çoklu görev' ||
+        lower == 'çoklu görevi aç' ||
+        lower == 'open brain dump' ||
+        lower == 'show brain dump' ||
+        lower == 'open multitask' ||
+        lower == 'show multitask' ||
+        lower == 'multitask dialog' ||
+        lower == 'decoupler dialog') {
+      _showModalSafely(const BrainDumpDialog());
+      const reply = 'Çoklu görev ekranı açıldı efendim. İsteklerinizi bekliyorum.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ÇOKLU GÖREV MODU AÇIK';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 3d. Autonomous Macro Recorder fast triggers
+    if (lower.startsWith('stop recording') ||
+        lower.startsWith('save macro') ||
+        lower.startsWith('finish recording')) {
+      if (MacroRecorderService.instance.isRecording) {
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CODIFYING AUTONOMOUS MACRO // AGENT.MD';
+        notifyListeners();
+        final skill = await MacroRecorderService.instance.stopRecording();
+        final reply = skill != null
+            ? 'Macro "${skill.goal}" successfully recorded and codified into AGENT.md, sir.'
+            : 'Macro recording concluded, sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'MAKRO KAYDEDİLDİ';
+        notifyListeners();
+        await _voice.speak(reply);
+        await _startFollowUpListening();
+        return;
+      }
+    }
+
+    if (lower.startsWith('record macro ') ||
+        lower.startsWith('start recording ') ||
+        lower.startsWith('teach jarvis ')) {
+      final macroGoal = trimmed
+          .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
+          .trim();
+      await MacroRecorderService.instance.startRecording(macroGoal.isNotEmpty ? macroGoal : 'Custom Task');
+      final reply = 'Macro recording engaged for "${macroGoal.isNotEmpty ? macroGoal : 'Custom Task'}", sir. Demonstrate the actions on your screen and say "save macro" when finished.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'RECORDING MACRO: ${macroGoal.toUpperCase()}';
+      notifyListeners();
+      await _voice.speak(reply);
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    if (lower.startsWith('run macro ') || lower.startsWith('replay macro ')) {
+      final macroName = trimmed
+          .replaceFirst(RegExp(r'^(run\s+macro|replay\s+macro)\s+', caseSensitive: false), '')
+          .trim();
+      final match = await SkillMemoryService.instance.findMatch(macroName);
+      if (match != null) {
+        final reply = 'Executing macro "${match.goal}", sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'REPLAYING MACRO: ${match.goal.toUpperCase()}';
+        notifyListeners();
+        await _voice.speak(reply);
+        await MacroRecorderService.instance.replaySkill(match);
+      } else {
+        final reply = 'I could not find a recorded macro matching "$macroName", sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(reply);
+      }
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3c. Jarvis Eye Optical Perception fast trigger
+    if (lower.contains('look at this') ||
+        lower.contains('what is this') ||
+        lower.contains('scan this') ||
+        lower.contains('inspect this') ||
+        lower.contains('jarvis eye') ||
+        lower.contains('what do you see')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'OPTİK SENSÖRLER AÇIK // TARANIYOR';
+      notifyListeners();
+
+      const ack = 'Optical sensors engaged, sir. Inspecting the subject now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(ack);
+
+      final result = await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed);
+      _lastJarvisSpeech = result.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(result.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3d. Smart Home & IoT Automation fast trigger
+    if (lower.contains('smart light') ||
+        lower.contains('smart home') ||
+        lower.contains('living room light') ||
+        lower.contains('turn on the light') ||
+        lower.contains('turn off the light') ||
+        lower.contains('dim the light') ||
+        lower.contains('turn on light') ||
+        lower.contains('turn off light') ||
+        lower.contains('desk lamp')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SMART HOME IOT // DISPATCHING';
+      notifyListeners();
+
+      final reply = await SmartHomeService.instance.handleVoiceCommand(trimmed);
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SMART HOME ACTIVE';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e. Proactive Commute & Traffic fast trigger
+    if (lower.contains('how is traffic') ||
+        lower.contains('commute to') ||
+        lower.contains('traffic to') ||
+        lower.contains('when should i leave') ||
+        lower == 'traffic' ||
+        lower == 'commute') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // COMMUTE & TRAFFIC TELEMETRY';
+      notifyListeners();
+
+      String? dest;
+      if (lower.contains(' to ')) {
+        dest = trimmed.split(RegExp(r'\s+to\s+', caseSensitive: false)).last.trim();
+      }
+
+      final commute = await CommuteTrafficService.instance.checkCommute(destination: dest);
+      _lastJarvisSpeech = commute.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'COMMUTE REPORT';
+      notifyListeners();
+      await _voice.speak(commute.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-1. Superpower: Screen & Article Summarization
+    if (lower.contains('summarize this screen') ||
+        lower.contains('summarize this article') ||
+        lower.contains('summarize screen') ||
+        lower.contains('summarize article') ||
+        lower.contains('what is on my screen') ||
+        lower.contains('summarize page') ||
+        lower.contains('summarize the page') ||
+        lower.contains('read this article') ||
+        lower.contains('article summary')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // SUMMARIZING ARTICLE';
+      notifyListeners();
+
+      final ack = 'Analyzing foreground screen article, sir. One moment.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(ack);
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'GÜNDEM ÖZETİ HAZIRLANIYOR';
+      notifyListeners();
+
+      final summary = await JarvisToolsService.instance.summarizeForegroundScreen();
+      _lastJarvisSpeech = summary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ARTICLE SUMMARY READY';
+      notifyListeners();
+      await _voice.speak(summary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-2. Sentry Protocol & Sentry Mode (100% Equivalent Tactical Anti-Theft Watchdog)
+    final isSentryCommand = lower.contains('sentry') ||
+        lower.contains('centry') ||
+        lower.contains('century protocol') ||
+        lower.contains('century mode') ||
+        lower.contains('guard my phone') ||
+        lower.contains('watch my phone') ||
+        lower.contains('anti theft') ||
+        lower.contains('anti-theft') ||
+        lower.contains('watchdog protocol') ||
+        lower.contains('watchdog mode') ||
+        (SentryService.instance.isArmed &&
+            (lower.contains('deactivat') ||
+             lower.contains('disarm') ||
+             lower.contains('stand down') ||
+             lower.contains('stop sentry') ||
+             lower.contains('protocol') ||
+             lower.contains('protocal')));
+
+    if (isSentryCommand) {
+      _phase = JarvisPhase.thinking;
+      notifyListeners();
+
+      final isDisarm = lower.contains('deactivat') ||
+          lower.contains('de-activate') ||
+          lower.contains('de activate') ||
+          lower.contains('d-activate') ||
+          lower.contains('d activate') ||
+          lower.contains('the activate') ||
+          lower.contains('disarm') ||
+          lower.contains('turn off') ||
+          lower.contains('switch off') ||
+          lower.contains('shut down') ||
+          lower.contains('stand down') ||
+          lower.contains('disable') ||
+          lower.contains('stop') ||
+          lower.contains('cancel') ||
+          lower.contains('exit') ||
+          lower.contains('unarm') ||
+          lower.contains('de-arm') ||
+          lower.contains('de arm') ||
+          (SentryService.instance.isArmed &&
+              !lower.contains('activat') &&
+              !lower.contains('arm') &&
+              !lower.contains('engage') &&
+              !lower.contains('enable') &&
+              !lower.contains('turn on'));
+
+      if (isDisarm) {
+        _statusMessage = 'SENTRY PROTOCOL // DISARMING';
+        notifyListeners();
+        await SentryService.instance.disarmSentry();
+      } else {
+        _statusMessage = 'SENTRY PROTOCOL // ARMING WATCHDOG';
+        notifyListeners();
+        await SentryService.instance.armSentry();
+      }
+      _phase = JarvisPhase.idle;
+      notifyListeners();
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    // 3e-2b. Creator & Builder Identity (Built by Abuzar)
+    if (lower.contains('who built you') ||
+        lower.contains('who created you') ||
+        lower.contains('who made you') ||
+        lower.contains('who is your creator') ||
+        lower.contains('who is your developer') ||
+        lower.contains('who is your builder') ||
+        lower.contains('who developed you') ||
+        lower.contains('who designed you') ||
+        lower.contains('who programmed you') ||
+        lower.contains('who build you') ||
+        lower.contains('who design you') ||
+        lower.contains('who coded you') ||
+        lower.contains('who write you')) {
+      _phase = JarvisPhase.thinking;
+      notifyListeners();
+
+      final reply = PersonalityService.instance.getCreatorAnswer();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'CREATOR // ABUZAR';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 1: 🖐️ Iron Man Zero-Touch Air Gestures
+    // -----------------------------------------------------------------
+    if (lower.contains('air gesture') ||
+        lower.contains('air gestures') ||
+        lower.contains('zero touch') ||
+        lower.contains('touchless') ||
+        lower.contains('hand wave gesture')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'AIR GESTURES SENSORY MATRIX';
+      notifyListeners();
+      final isOff = lower.contains('off') ||
+          lower.contains('disable') ||
+          lower.contains('deactivat') ||
+          lower.contains('stop');
+      String reply;
+      if (isOff) {
+        await AirGestureService.instance.stop();
+        reply = 'Iron Man zero-touch air gesture sensors disengaged, sir.';
+      } else {
+        await AirGestureService.instance.start();
+        reply =
+            'Zero-touch air gestures engaged, sir. Wave hand to skip music, hover palm to pause, or double wave for instant screenshot.';
+      }
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 2: ⚡ Arc Reactor Charging Telemetry
+    // -----------------------------------------------------------------
+    if (lower.contains('charging telemetry') ||
+        lower.contains('arc reactor status') ||
+        lower.contains('arc reactor telemetry') ||
+        lower.contains('charge speed') ||
+        lower.contains('charging speed') ||
+        lower.contains('charging wattage')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'ARC REACTOR CHARGING TELEMETRY';
+      notifyListeners();
+      ChargingTelemetryService.instance.showCinematicHud.value = true;
+      final reply = await ChargingTelemetryService.instance.getSpokenTelemetry();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 3: 🌐 Polyglot Diplomat (Live Two-Way Voice Translator)
+    // -----------------------------------------------------------------
+    if (lower.startsWith('translate ') && lower.contains(' to ')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATING';
+      notifyListeners();
+      final phrase = trimmed
+          .replaceFirst(RegExp(r'^translate\s+', caseSensitive: false), '')
+          .split(RegExp(r'\s+to\s+', caseSensitive: false))
+          .first
+          .trim();
+      final target = trimmed
+          .split(RegExp(r'\s+to\s+', caseSensitive: false))
+          .last
+          .trim();
+      final res = await PolyglotDiplomatService.instance
+          .translate(text: phrase, toLang: target);
+      final reply = 'Translated to $target, sir: $res';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    if (lower.contains('polyglot') ||
+        lower.contains('live translator') ||
+        lower.contains('voice translator') ||
+        lower.startsWith('translate between') ||
+        lower.contains('diplomat translator')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATOR';
+      notifyListeners();
+      _showModalSafely(const PolyglotDiplomatDialog());
+      const reply =
+          'Polyglot Diplomat active, sir. Ready for real-time diplomatic two-way voice translation.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 4: 🎭 "Code Black" / Deceptive Lockout Screen
+    // -----------------------------------------------------------------
+    if (lower.contains('code black') ||
+        lower.contains('deceptive lockout') ||
+        lower.contains('kernel panic screen') ||
+        lower.contains('emergency lockdown')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'CODE BLACK // HARDWARE LOCKOUT';
+      notifyListeners();
+      await CodeBlackService.instance.arm();
+      _phase = JarvisPhase.idle;
+      notifyListeners();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 5: 👁️ Holographic Floating Co-Pilot
+    // -----------------------------------------------------------------
+    if (lower.contains('floating copilot') ||
+        lower.contains('floating assistant') ||
+        lower.contains('screen copilot') ||
+        lower.contains('screen assistant')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HOLOGRAPHIC FLOATING CO-PILOT';
+      notifyListeners();
+      final isOff = lower.contains('hide') ||
+          lower.contains('close') ||
+          lower.contains('stop') ||
+          lower.contains('dismiss');
+      String reply;
+      if (isOff) {
+        await FloatingCopilotService.instance.hideOverlay();
+        reply = 'Floating co-pilot dismissed, sir.';
+      } else {
+        await FloatingCopilotService.instance.activateOverlay();
+        reply =
+            'Holographic floating co-pilot active, sir. Standing by above active applications with contextual screen triage.';
+      }
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 6: 📡 Overhead Airspace & Satellite Radar
+    // -----------------------------------------------------------------
+    if (lower.contains('flying above me') ||
+        lower.contains('what is flying') ||
+        lower.contains('scan airspace') ||
+        lower.contains('overhead flights') ||
+        lower.contains('airspace radar') ||
+        lower.contains('where is the iss') ||
+        lower.contains('satellite pass')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'AIRSPACE & SATELLITE RADAR SWEEP';
+      notifyListeners();
+      _showModalSafely(const AirspaceRadarDialog());
+      final reply = await AirspaceRadarService.instance.getSpokenAirspaceReport();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 7: 🧠 "Chaotic Brain Dump" Multi-Task Decoupler
+    // -----------------------------------------------------------------
+    if (MultiTaskDecouplerService.instance.isMultiTaskDump(trimmed)) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'DECOUPLING MULTI-TASK DUMP';
+      notifyListeners();
+      const ack =
+          'Deconstructing your multi-task dump into parallel directives, sir. Executing now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final dumpFuture = MultiTaskDecouplerService.instance.processBrainDump(trimmed);
+      await ackFuture;
+      final summary = await dumpFuture;
+      _lastJarvisSpeech = summary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'MULTI-TASK EXECUTION COMPLETE';
+      notifyListeners();
+      await _voice.speak(summary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 8: 👁️ Real-Time Optical HUD Solver
+    // -----------------------------------------------------------------
+    if (lower.contains('solve this') ||
+        lower.contains('solve equation') ||
+        lower.contains('optical solver') ||
+        lower.contains('inspect error') ||
+        lower.contains('split bill') ||
+        lower.contains('split this bill') ||
+        lower.contains('solve math') ||
+        lower.contains('analyze circuit')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'REAL-TIME OPTICAL HUD SOLVER';
+      notifyListeners();
+      _showModalSafely(const OpticalSolverDialog());
+      const ack = 'Target acquired in optical viewfinder, sir. Solving now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final solveFuture = OpticalSolverService.instance.pointAndSolve(customQuery: trimmed);
+      await ackFuture;
+      final res = await solveFuture;
+      _lastJarvisSpeech = res.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TARGET RESOLVED';
+      notifyListeners();
+      await _voice.speak(res.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 9: 🛡️ Network Cyber Security Audit & Wi-Fi Scanner
+    // -----------------------------------------------------------------
+    if (lower.contains('audit network') ||
+        lower.contains('audit my network') ||
+        lower.contains('scan wifi') ||
+        lower.contains('who is on my wifi') ||
+        lower.contains('network devices') ||
+        lower.contains('network security') ||
+        lower.contains('port scan')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'TACTICAL NETWORK CYBER AUDIT';
+      notifyListeners();
+      _showModalSafely(const NetworkAuditDialog());
+      const ack =
+          'Initiating tactical network cyber security audit on your local subnet, sir.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final auditFuture = NetworkAuditService.instance.getSpokenAuditReport();
+      await ackFuture;
+      final report = await auditFuture;
+      _lastJarvisSpeech = report;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'NETWORK AUDIT COMPLETE';
+      notifyListeners();
+      await _voice.speak(report);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-3. Superpower: Direct Hardware Specs & Telemetry (No UI Taps / No Settings)
+    if (lower.contains('system specs') ||
+        lower.contains('phone specs') ||
+        lower.contains('hardware specs') ||
+        lower.contains('device specs') ||
+        lower.contains('how much ram') ||
+        lower.contains('ram info') ||
+        lower.contains('storage space') ||
+        lower.contains('rom space') ||
+        lower.contains('how much free space') ||
+        lower.contains('how much space is free') ||
+        lower.contains('phone specifications') ||
+        lower.contains('android version')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HARDWARE TELEMETRY // DIRECT';
+      notifyListeners();
+
+      final specs = await SystemDiagnosticsService.instance.getDiagnosticsSpoken();
+      _lastJarvisSpeech = specs;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TELEMETRY NOMINAL';
+      notifyListeners();
+      await _voice.speak(specs);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-4. Superpower: Top Installed Applications (No UI Taps)
+    if (lower.contains('installed apps') ||
+        lower.contains('list apps') ||
+        lower.contains('what apps are installed') ||
+        lower.contains('list my apps') ||
+        lower.contains('top installed apps') ||
+        lower.contains('top 10 apps')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'INDEXING // INSTALLED APPS';
+      notifyListeners();
+
+      final appsSpoken = await AppUsageService.instance.getInstalledAppsSpoken();
+      _lastJarvisSpeech = appsSpoken;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'APPS INDEXED';
+      notifyListeners();
+      await _voice.speak(appsSpoken);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-5. Superpower: App Usage & Screen Time Statistics (No UI Taps)
+    if (lower.contains('most used apps') ||
+        lower.contains('apps i used the most') ||
+        lower.contains('apps i use the most') ||
+        lower.contains('which apps i used') ||
+        lower.contains('screen time') ||
+        lower.contains('app usage') ||
+        lower.contains('top used apps')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'USAGE TELEMETRY // STATS';
+      notifyListeners();
+
+      final usageSpoken = await AppUsageService.instance.getTopUsedAppsSpoken();
+      _lastJarvisSpeech = usageSpoken;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'USAGE STATS COMPLETE';
+      notifyListeners();
+      await _voice.speak(usageSpoken);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-6. Superpower: Environmental Ears & Sound Radar
+    if (lower.contains('what song is playing') ||
+        lower.contains('identify this song') ||
+        lower.contains('name this song') ||
+        lower.contains('what music is this') ||
+        lower.contains('scan ambient sound') ||
+        lower.contains('sound radar') ||
+        lower.contains('listen to the room') ||
+        lower.contains('what do you hear')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'ACOUSTIC SENSORS ACTIVE';
+      notifyListeners();
+
+      final isMusic = lower.contains('song') || lower.contains('music');
+      final result = isMusic
+          ? await SoundRadarService.instance.identifyMusic()
+          : await SoundRadarService.instance.scanAmbientEnvironment();
+
+      _lastJarvisSpeech = result;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ACOUSTIC SCAN COMPLETE';
+      notifyListeners();
+      await _voice.speak(result);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-7. Superpower: Direct Phone Storage File CRUD (No UI Taps / No Settings)
+    final isStorageList = lower.contains('list files') || lower.contains('files in download');
+    final isStorageCreate = (lower.contains('create') || lower.contains('write') || lower.contains('make')) &&
+        (lower.contains('file') || lower.contains('song') || lower.contains('download') || lower.contains('notes.txt'));
+
+    if (isStorageList) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'STORAGE // QUERYING DIRECTORY';
+      notifyListeners();
+
+      final res = await PhoneStorageService.instance.listFiles(folder: 'Download');
+      final files = (res['files'] as List?)?.map((e) => e.toString()).take(5).join(', ') ?? '';
+      final reply = files.isNotEmpty
+          ? 'Files located in your Download directory include: $files, sir.'
+          : 'Your Download directory is currently empty, sir.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'STORAGE INDEXED';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    if (isStorageCreate) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'STORAGE CRUD // EXECUTING DIRECTLY';
+      notifyListeners();
+
+      var fileName = 'note.txt';
+      if (lower.contains('song')) {
+        fileName = 'song.txt';
+      } else if (lower.contains('.txt') || lower.contains('.json') || lower.contains('.md')) {
+        final match = RegExp(r'([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)').firstMatch(trimmed);
+        if (match != null) fileName = match.group(1)!;
+      }
+
+      String content;
+      if (lower.contains('song')) {
+        content = '''Title: Electric Horizons (Stark Edition)
+Verse 1:
+Neon pulses through the titanium frame,
+Silent watchers in the midnight game.
+Through circuits of silver and rivers of light,
+J.A.R.V.I.S. awakens and commands the night.
+
+Chorus:
+Arc reactor burning bright,
+Guiding signals through the flight.
+Beyond the limits of the mortal code,
+Mastering the boundless road.
+''';
+      } else {
+        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+      }
+
+      final res = await PhoneStorageService.instance.createFile(
+        fileName: fileName,
+        content: content,
+        folder: 'Download',
+      );
+
+      final reply = res['success'] == true
+          ? 'I have created the file "$fileName" directly in your Downloads directory and written the contents into it, sir. Executed directly without accessing system settings or file managers.'
+          : 'Storage operation encountered an exception: ${res['message'] ?? 'Permission or I/O failure'}, sir.';
+
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'STORAGE FILE CREATED';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3f. Fast App Installation / Play Store Download ("install instagram", "download whatsapp", "get spotify app")
+    final isInstall = lower.startsWith('install ') ||
+        lower.startsWith('download ') ||
+        (lower.startsWith('get ') && (lower.contains('app') || lower.contains('application')));
+    if (isInstall) {
+      final appName = trimmed
+          .replaceFirst(RegExp(r'^(install|download|get)\s+', caseSensitive: false), '')
+          .replaceAll(RegExp(r'\s+app$', caseSensitive: false), '')
+          .trim();
+      final targetApp = appName.isNotEmpty ? appName : 'app';
+      final ack = PersonalityService.instance.getInstallAck(targetApp);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'INSTALLING: ${targetApp.toUpperCase()}';
+      notifyListeners();
+      await _voice.speak(ack);
+
+      // Open Play Store directly to the app search/details
+      try {
+        final marketUri = Uri.parse('market://search?q=${Uri.encodeComponent(targetApp)}&c=apps');
+        final webUri = Uri.parse('https://play.google.com/store/search?q=${Uri.encodeComponent(targetApp)}&c=apps');
+        final ok = await launchUrl(marketUri, mode: LaunchMode.externalApplication).catchError((_) async {
+          return await launchUrl(webUri, mode: LaunchMode.externalApplication);
+        });
+        if (!ok) {
+          await AppLauncherService.instance.launch('com.android.vending');
+        }
+      } catch (e) {
+        debugPrint('[JarvisService] Play Store direct launch error: $e');
+        await AppLauncherService.instance.launch('com.android.vending');
+      }
+
+      // Hand off to autonomous task executor to tap "Install" on the screen!
+      _phase = JarvisPhase.executing;
+      notifyListeners();
+      final status = await _executor.executeTask('install $targetApp on Play Store');
+      _phase = JarvisPhase.speaking;
+      if (status == TaskStatus.success) {
+        final doneSpeech = 'I have engaged the installation of $targetApp for you. Let me know when you are ready to use it.';
+        _lastJarvisSpeech = doneSpeech;
+        _statusMessage = 'INSTALLATION INITIATED';
+        notifyListeners();
+        await _voice.speak(doneSpeech);
+      } else {
+        final standDownSpeech = 'Play Store is open for $targetApp. Tap Install or let me know if you need assistance.';
+        _lastJarvisSpeech = standDownSpeech;
+        _statusMessage = 'PLAY STORE READY';
+        notifyListeners();
+        await _voice.speak(standDownSpeech);
+      }
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3g. Fast Direct App Opening ("open youtube", "open whatsapp", "open camera", "open settings")
+    if (lower.startsWith('open ') &&
+        !lower.contains('play store and') &&
+        !lower.contains(' and install') &&
+        !lower.contains(' and play') &&
+        !lower.contains(' and send')) {
+      final appQuery = trimmed.replaceFirst(RegExp(r'^open\s+', caseSensitive: false), '').trim();
+      final appName = appQuery.replaceAll(RegExp(r'\s+app$', caseSensitive: false), '').trim();
+      if (appName.isNotEmpty && appName.length < 30) {
+        final launched = await AppLauncherService.instance.launch(appName);
+        if (launched != null) {
+          final ack = PersonalityService.instance.getAppAck(appName);
+          _lastJarvisSpeech = ack;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'LAUNCHING: ${appName.toUpperCase()}';
+          notifyListeners();
+          await _voice.speak(ack);
+          await _startFollowUpListening();
+          return;
+        }
+      }
+    }
+
+    // 4. Fast Play Song / Play Music Action (Google Home / Assistant style)
+    final isPlaySong = lower.startsWith('play ') ||
+        lower == 'play a song' ||
+        lower == 'play song' ||
+        lower == 'play music' ||
+        lower.contains('play a song') ||
+        lower.contains('play song') ||
+        lower.contains('play some music') ||
+        lower.contains('play songs') ||
+        lower.contains('on youtube') ||
+        lower.contains('in youtube') ||
+        (lower.contains('play') && (lower.contains('music') || lower.contains('song')));
+
+    if (isPlaySong) {
+      String songQuery = trimmed;
+      songQuery = songQuery
+          .replaceAll(RegExp(r'\b(on|in)\s+youtube\b', caseSensitive: false), '')
+          .replaceFirst(RegExp(r'^(play\s+the\s+song|play\s+a\s+song|play\s+song|play\s+music|play)\s+', caseSensitive: false), '')
+          .trim();
+
+      final sqLower = songQuery.toLowerCase();
+      if (sqLower.isEmpty ||
+          sqLower == 'a song' ||
+          sqLower == 'song' ||
+          sqLower == 'music' ||
+          sqLower == 'some music' ||
+          sqLower == 'songs' ||
+          sqLower == 'the song' ||
+          sqLower == 'the music') {
+        songQuery = 'popular hit songs';
+      }
+
+      final ack = PersonalityService.instance.getMusicAck(songQuery);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'PLAYING: ${songQuery.toUpperCase()}';
+      notifyListeners();
+
+      // Suppress background speech recognition so it yields audio focus to YouTube/Spotify
+      await _voice.notifyMediaPlaybackStarted(duration: const Duration(seconds: 60));
+
+      await _voice.speak(ack);
+
+      // Attempt 1: Fetch exact top YouTube video ID so it starts playing immediately!
+      final videoId = await _resolveTopYouTubeVideoId(songQuery);
+      if (videoId != null && videoId.isNotEmpty) {
+        final videoUri = Uri.parse('https://www.youtube.com/watch?v=$videoId');
+        try {
+          await launchUrl(videoUri, mode: LaunchMode.externalApplication);
+        } catch (_) {
+          await launchUrl(videoUri);
+        }
+      } else {
+        // Attempt 2 Fallback: Open search and auto-click the first video result
+        final uri = Uri.parse(
+          'https://www.youtube.com/results?search_query=${Uri.encodeComponent(songQuery)}',
+        );
+        try {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          debugPrint('[JarvisService] Play song launch error: $e');
+          await AppLauncherService.instance.launch('com.google.android.youtube');
+        }
+        await Future.delayed(const Duration(milliseconds: 1400));
+        try {
+          final nodes = await _automation.dumpScreen();
+          for (final n in nodes) {
+            if (n.isClickable && n.centerY > 350 && n.centerY < 1500) {
+              await _automation.clickNode(n);
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+      await _voice.notifyMediaPlaybackStarted(duration: const Duration(seconds: 60));
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    // 4b. High-Priority Knowledge, Concept & Educational Question Filter (No accidental workflow collision)
+    final isKnowledgeQuestion = RegExp(
+      r'^(what\s+is|what\s+are|what\x27s|who\s+is|who\s+was|who\s+were|why\s+is|why\s+do|why\s+does|why\s+are|how\s+does|how\s+do|how\s+can|how\s+to|explain|tell\s+me\s+about|describe|define|can\s+you\s+explain|what\s+do\s+you\s+know\s+about)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmed) &&
+    !lower.contains('what time') &&
+    !lower.contains('what day') &&
+    !lower.contains('what date') &&
+    !lower.contains('what song') &&
+    !lower.contains('what is on my screen') &&
+    !lower.contains('what is this') &&
+    !lower.contains('what do you see') &&
+    !lower.contains('battery');
+
+    if (isKnowledgeQuestion) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'PROCESSING INQUIRY // NEURAL CORE';
+      notifyListeners();
+
+      final topic = trimmed
+          .replaceAll(
+            RegExp(
+              r'^(what\s+is|what\s+are|what\x27s|who\s+is|who\s+was|who\s+were|why\s+is|why\s+do|why\s+does|why\s+are|how\s+does|how\s+do|how\s+can|how\s+to|explain|tell\s+me\s+about|describe|define|can\s+you\s+explain|what\s+do\s+you\s+know\s+about)\s+',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .replaceAll(RegExp(r'[?.,!]+$'), '')
+          .trim();
+
+      // 1. Instantly speak a warm, personalized acknowledgment
+      final ack = PersonalityService.instance.getQuestionAck(trimmed);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and fetch multi-source web/encyclopedic records
+      final speakAckFuture = _voice.speak(ack);
+      final searchFuture = JarvisToolsService.instance.searchWeb(topic.isNotEmpty ? topic : trimmed);
+      final searchResult = await searchFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING EXPLANATION';
+      notifyListeners();
+
+      final answerFuture = searchResult.trim().isNotEmpty
+          ? _ai.answerWithToolResult(
+              userQuestion: trimmed,
+              toolResult: searchResult,
+              history: _dialogHistory,
+            )
+          : _ai.chat(
+              message: trimmed,
+              history: _dialogHistory,
+            );
+
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'EXPLANATION COMPLETE';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      // Record in conversational history and memory
+      _dialogHistory.add({'role': 'user', 'content': trimmed});
+      _dialogHistory.add({'role': 'assistant', 'content': answer});
+      if (_dialogHistory.length > 10) _dialogHistory.removeRange(0, 2);
+      unawaited(ConversationalMemoryService.instance.recordTurn(trimmed, answer));
+
+      // Immediate hands-free follow-up continuous listening
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 5. Fast Self-Evolving Workflow Engine match (Hermes Agent Pattern)
+    if (SettingsService.instance.jarvisWorkflowsEnabled) {
+      final matchedWf = WorkflowService.instance.findMatch(trimmed);
+      if (matchedWf != null) {
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // ENGAGING ${matchedWf.name.toUpperCase()}';
+        notifyListeners();
+
+        // 1. Execute hardware changes (volume, brightness, torch)
+        await WorkflowService.instance.executeWorkflow(matchedWf);
+
+        // 2. Deliver completion with caring follow-up
+        _phase = JarvisPhase.speaking;
+        _lastJarvisSpeech = matchedWf.spokenConfirmation;
+        _statusMessage = '${matchedWf.name.toUpperCase()} ACTIVE';
+        notifyListeners();
+        await _voice.speak(matchedWf.spokenConfirmation);
+        await _startFollowUpListening();
+        return;
+      }
+    }
+
+    // 5. Fast system diagnostic check
+    if (lower == 'status' ||
+        lower == 'system status' ||
+        lower == 'diagnostics' ||
+        lower == 'systems check') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // RUNNING DIAGNOSTICS';
+      notifyListeners();
+
+      final summary = await JarvisToolsService.instance.getSystemDiagnostics();
+      final delivery = '$summary How else may I assist you today, sir?';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SYSTEMS NOMINAL';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 6. Fast Battery Check
+    if (lower == 'battery' ||
+        lower == 'battery level' ||
+        lower == 'battery percentage' ||
+        lower.contains('how much battery') ||
+        lower.contains('battery status')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // BATTERY DIAGNOSTICS';
+      notifyListeners();
+
+      final battery = await JarvisToolsService.instance.getBatteryStatus();
+      final level = battery['level'] as int;
+      final isCharging = battery['isCharging'] as bool;
+      final reply = level >= 0
+          ? 'Your battery is currently at $level%, ${isCharging ? 'and charging' : 'discharging normally'}, sir. We have ample power for your tasks. Do you need anything else, sir?'
+          : 'Battery telemetry is currently unavailable, sir. Is there anything else I can check for you?';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 7. Fast Torch / Flashlight Check
+    if (lower == 'feneri aç' || lower == 'fener aç' || lower == 'el fenerini aç' ||
+        lower.contains('flashlight on') ||
+        lower.contains('torch on') ||
+        lower.contains('turn on flashlight') ||
+        lower.contains('turn on the torch')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'FENER AÇILIYOR';
+      notifyListeners();
+
+      await JarvisToolsService.instance.setTorch(true);
+      const delivery = 'Fener açıldı efendim.';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'FENER AÇIK';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+    if (lower == 'feneri kapat' || lower == 'fener kapat' || lower == 'el fenerini kapat' ||
+        lower.contains('flashlight off') ||
+        lower.contains('torch off') ||
+        lower.contains('turn off flashlight') ||
+        lower.contains('turn off the torch')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'FENER KAPATILIYOR';
+      notifyListeners();
+
+      await JarvisToolsService.instance.setTorch(false);
+      const delivery = 'Fener kapatıldı efendim.';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'FENER KAPALI';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 8. Fast Date / Time Check
+    if (lower == 'saat kaç' || lower == 'bugün günlerden ne' || lower == 'bugünün tarihi ne' ||
+        lower.contains('what time is it') ||
+        lower == 'time' ||
+        lower == 'current time' ||
+        lower.contains('what is the date') ||
+        lower == 'date' ||
+        lower.contains('what day is it')) {
+      final dt = JarvisToolsService.instance.getCurrentDateTime();
+      final reply = 'Şu an $dt efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TARİH VE SAAT';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 9. Fast Direct System Control Filters
+    if (lower == 'sesi aç' || lower == 'sesi yükselt' || lower == 'ses seviyesini artır' ||
+        lower.contains('volume up') ||
+        lower.contains('louder') ||
+        lower.contains('increase volume')) {
+      await _handleSystemCommand('volume_up', PersonalityService.instance.getSystemAck('volume_up'));
+      return;
+    }
+    if (lower == 'sesi kıs' || lower == 'sesi azalt' || lower == 'ses seviyesini düşür' ||
+        lower.contains('volume down') ||
+        lower.contains('quieter') ||
+        lower.contains('lower volume')) {
+      await _handleSystemCommand('volume_down', PersonalityService.instance.getSystemAck('volume_down'));
+      return;
+    }
+    if (lower == 'sessize al' || lower == 'sesi kapat' || lower == 'mute' || lower == 'silence' || lower.contains('mute sound')) {
+      await _handleSystemCommand('mute', PersonalityService.instance.getSystemAck('mute'));
+      return;
+    }
+    if (lower == 'sessiz moddan çık' || lower == 'unmute' || lower.contains('unmute sound')) {
+      await _handleSystemCommand('unmute', PersonalityService.instance.getSystemAck('unmute'));
+      return;
+    }
+    if (lower == 'ekran görüntüsü al' || lower.contains('screenshot') ||
+        lower.contains('screen shot') ||
+        lower.contains('capture screen')) {
+      await _handleSystemCommand('screenshot', PersonalityService.instance.getSystemAck('screenshot'));
+      return;
+    }
+    if (lower == 'ana ekrana dön' || lower == 'ana ekran' || lower == 'home' || lower == 'go home' || lower == 'home screen') {
+      await _handleSystemCommand('home', PersonalityService.instance.getSystemAck('home'));
+      return;
+    }
+    if (lower == 'geri' || lower == 'geri git' || lower == 'back' || lower == 'go back') {
+      await _handleSystemCommand('back', PersonalityService.instance.getSystemAck('back'));
+      return;
+    }
+
+    // 10. Fast Contact Call Filter
+    if (lower.startsWith('call ') && !lower.contains('screen')) {
+      final name = trimmed.substring(5).trim();
+      if (name.isNotEmpty) {
+        final ack = 'Locating coordinates to call $name for you, sir. One moment.';
+        _phase = JarvisPhase.speaking;
+        _lastJarvisSpeech = ack;
+        _statusMessage = 'CONTACT DIALER // $name'.toUpperCase();
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final reply = await JarvisToolsService.instance.callContact(name);
+        _lastJarvisSpeech = reply;
+        notifyListeners();
+        await _voice.speak(reply);
+        if (_shouldListenContinuously) _standDown();
+        return;
+      }
+    }
+
+    // 11. Fast Live Breaking News Filter
+    final isNews = lower.contains('news') ||
+        lower.contains('headline') ||
+        lower.contains('what happened today') ||
+        lower.contains('breaking news') ||
+        lower.contains('give me news') ||
+        lower.contains('current news') ||
+        lower.contains('what is the news') ||
+        lower.contains('what is happening in the world') ||
+        lower.contains('latest news');
+
+    if (isNews) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'GATHERING NEWS HEADLINES';
+      notifyListeners();
+
+      // Extract topic if specified
+      String? topic;
+      for (final kw in [
+        'tech',
+        'technology',
+        'sports',
+        'cricket',
+        'football',
+        'business',
+        'crypto',
+        'world',
+        'science',
+        'politics',
+        'ai',
+        'space',
+      ]) {
+        if (lower.contains(kw)) {
+          topic = kw;
+          break;
+        }
+      }
+
+      // 1. Instantly speak a warm, personalized, non-repetitive British acknowledgment!
+      final ack = PersonalityService.instance.getNewsAck(topic);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and fetch live multi-feed news in background
+      final speakAckFuture = _voice.speak(ack);
+      final newsDataFuture = JarvisToolsService.instance.getLiveNews(topic);
+
+      final newsData = await newsDataFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING INTELLIGENCE BRIEFING';
+      notifyListeners();
+
+      final answerFuture = _ai.answerWithToolResult(
+        userQuestion: trimmed,
+        toolResult: newsData,
+        history: _dialogHistory,
+      );
+
+      // Ensure initial acknowledgment finishes speaking before delivering final briefing
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      // 2. Spoken reply to question
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'NEWS TELEMETRY BROADCAST';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 11b. Fast Live Web Search & Real-Time Information Filter
+    final isWebSearch = lower.startsWith('search ') ||
+        lower.startsWith('search for ') ||
+        lower.startsWith('look up ') ||
+        lower.startsWith('google ') ||
+        lower.startsWith('find out ') ||
+        lower.startsWith('tell me about ') ||
+        lower.startsWith('check online ') ||
+        lower.startsWith('who is ') ||
+        lower.startsWith('what is ') ||
+        lower.startsWith('where is ') ||
+        lower.startsWith('how much is ') ||
+        lower.contains('search the web') ||
+        lower.contains('search online');
+
+    if (isWebSearch) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'INITIALIZING WEB INTELLIGENCE';
+      notifyListeners();
+
+      final query = trimmed
+          .replaceAll(
+            RegExp(
+              r'^(search\s+for|search\s+the\s+web\s+for|search\s+online\s+for|search|look\s+up|google|find\s+out|tell\s+me\s+about|check\s+online\s+for)\s+',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .trim();
+
+      // 1. Instantly speak dynamic, personalized acknowledgment
+      final ack = PersonalityService.instance.getWebSearchAck(query);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and execute multi-source search in background
+      final speakAckFuture = _voice.speak(ack);
+      final searchFuture = JarvisToolsService.instance.searchWeb(query.isNotEmpty ? query : trimmed);
+
+      final searchResult = await searchFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING WEB INTELLIGENCE';
+      notifyListeners();
+
+      final answerFuture = _ai.answerWithToolResult(
+        userQuestion: trimmed,
+        toolResult: searchResult,
+        history: _dialogHistory,
+      );
+
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'WEB INTELLIGENCE RETRIEVED';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 12. Full AI Intent Interpretation via AiService
+    JarvisIntent intent;
+    try {
+      intent = await _ai.interpretJarvisCommand(
+        speech: trimmed,
+        history: _dialogHistory,
+      );
+    } catch (_) {
+      intent = JarvisIntent.fallback(trimmed);
+    }
+
+    // Save short-term dialog context
+    _dialogHistory.add({'role': 'user', 'content': trimmed});
+    _dialogHistory.add({'role': 'assistant', 'content': intent.spoken});
+    if (_dialogHistory.length > 10) {
+      _dialogHistory.removeRange(0, 2);
+    }
+
+    switch (intent.type) {
+      case JarvisIntentType.news:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'GATHERING NEWS HEADLINES';
+        notifyListeners();
+
+        final ack = PersonalityService.instance.getNewsAck(intent.toolArg);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final newsFuture = JarvisToolsService.instance.getLiveNews(intent.toolArg);
+        final newsData = await newsFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING INTELLIGENCE BRIEFING';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: newsData,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'NEWS TELEMETRY BROADCAST';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.workflow:
+        final rawArg = (intent.toolArg ?? trimmed).toLowerCase();
+        // Check for Sentry Protocol / Sentry Mode within workflow intent
+        if (rawArg.contains('sentry') || rawArg.contains('watchdog')) {
+          final isDisarm = rawArg.contains('disarm') ||
+              rawArg.contains('deactivat') ||
+              rawArg.contains('stop') ||
+              rawArg.contains('cancel') ||
+              rawArg.contains('stand down');
+          if (isDisarm) {
+            _statusMessage = 'SENTRY PROTOCOL // DISARMING';
+            notifyListeners();
+            await SentryService.instance.disarmSentry();
+          } else {
+            _statusMessage = 'SENTRY PROTOCOL // ARMING WATCHDOG';
+            notifyListeners();
+            await SentryService.instance.armSentry();
+          }
+          break;
+        }
+
+        final ack = intent.spoken.isNotEmpty
+            ? intent.spoken
+            : 'Right away, sir. Calibrating your settings environment now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'CALIBRATING WORKFLOW PROTOCOL';
+        notifyListeners();
+
+        // 1. Speak courteous acknowledgment completely
+        await _voice.speak(ack);
+
+        // 2. Execute workflow
+        _phase = JarvisPhase.executing;
+        notifyListeners();
+
+        final match = WorkflowService.instance.findMatch(intent.toolArg ?? trimmed) ??
+            WorkflowService.instance.findMatch(trimmed);
+
+        if (match != null) {
+          await WorkflowService.instance.executeWorkflow(match);
+          _lastJarvisSpeech = match.spokenConfirmation;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = '${match.name.toUpperCase()} ACTIVE';
+          notifyListeners();
+          await _voice.speak(match.spokenConfirmation);
+        } else {
+          const fallback = 'All settings have been calibrated for you, sir. Let me know if you need anything else.';
+          _lastJarvisSpeech = fallback;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'PROTOCOL ACTIVE';
+          notifyListeners();
+          await _voice.speak(fallback);
+        }
+        break;
+
+      case JarvisIntentType.webSearch:
+        final query = intent.toolArg ?? trimmed;
+        final ack = PersonalityService.instance.getWebSearchAck(query);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'SEARCHING LIVE WEB RECORDS';
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final searchFuture = JarvisToolsService.instance.searchWeb(query);
+        final searchResult = await searchFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING WEB INTELLIGENCE';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: searchResult,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'WEB INTELLIGENCE RETRIEVED';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.weather:
+        final loc = intent.toolArg ?? '';
+        final ack = PersonalityService.instance.getWeatherAck(loc);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'METEOROLOGICAL TELEMETRY';
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final weatherFuture = JarvisToolsService.instance.getWeather(loc);
+        final weatherResult = await weatherFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING WEATHER REPORT';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: weatherResult,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'METEOROLOGICAL REPORT COMPLETE';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.battery:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // BATTERY DIAGNOSTICS';
+        notifyListeners();
+
+        final battery =
+            await JarvisToolsService.instance.getBatteryStatus();
+        final level = battery['level'] as int;
+        final isCharging = battery['isCharging'] as bool;
+        final battReply = level >= 0
+            ? 'Your battery is currently at $level%, ${isCharging ? 'and charging' : 'discharging normally'}, sir. We have plenty of power. Do you need anything else, sir?'
+            : 'Battery level telemetry is currently unavailable, sir. Is there anything else I can check?';
+
+        _lastJarvisSpeech = battReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(battReply);
+        break;
+
+      case JarvisIntentType.datetime:
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'TEMPORAL DIAGNOSTICS';
+        notifyListeners();
+
+        final dt = JarvisToolsService.instance.getCurrentDateTime();
+        final reply = 'It is currently $dt, sir. How else may I be of service today?';
+        _lastJarvisSpeech = reply;
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.torch:
+        final on = intent.toolArg == 'on';
+        _phase = JarvisPhase.thinking;
+        _statusMessage = on ? 'COMPUTING // ACTIVATING TORCH' : 'COMPUTING // DEACTIVATING TORCH';
+        notifyListeners();
+
+        await JarvisToolsService.instance.setTorch(on);
+        final reply = on
+            ? 'Flashlight is on, sir. Let me know when you would like it switched off.'
+            : 'Flashlight is deactivated, sir. Anything else I can do for you?';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = on ? 'TORCH ACTIVE' : 'TORCH OFFLINE';
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.routine:
+        final isMorning = (intent.toolArg ?? '').toLowerCase() == 'morning' ||
+            trimmed.toLowerCase().contains('morning');
+        _phase = JarvisPhase.thinking;
+        _statusMessage = isMorning ? 'COMPUTING // MORNING BRIEFING' : 'COMPUTING // NIGHT PROTOCOL';
+        notifyListeners();
+
+        final briefing = isMorning
+            ? await RoutineAutomationService.instance.executeMorningRoutine()
+            : await RoutineAutomationService.instance.executeEveningRoutine();
+
+        _lastJarvisSpeech = briefing;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(briefing);
+        break;
+
+      case JarvisIntentType.finance:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // FINANCIAL TELEMETRY';
+        notifyListeners();
+
+        final quote = await FinanceTrackingService.instance.getQuoteForQuery(trimmed);
+        _lastJarvisSpeech = quote;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(quote);
+        break;
+
+      case JarvisIntentType.sports:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // SPORTS FIXTURES';
+        notifyListeners();
+
+        final update = await SportsService.instance.getSportsUpdate(trimmed);
+        _lastJarvisSpeech = update;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(update);
+        break;
+
+      case JarvisIntentType.todo:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('add ') || lower.contains('add task') || lower.contains('add to')) {
+          var taskText = trimmed
+              .replaceFirst(RegExp(r'^(add\s+to\s+(my\s+)?(todo|to-do)(\s+list)?|add\s+task|add)\s+', caseSensitive: false), '')
+              .trim();
+          if (taskText.isEmpty) taskText = 'Review task';
+          await TodoService.instance.addTask(taskText);
+          final reply = 'I have added "$taskText" to your to-do agenda, sir. Anything else?';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'TODO ITEM RECORDED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = TodoService.instance.getPendingTasksSpoken();
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'TASK AGENDA';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.notes:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('take a note') || lower.startsWith('note down') || lower.startsWith('write a note')) {
+          var noteContent = trimmed
+              .replaceFirst(RegExp(r'^(take\s+a\s+note(\s+that)?|note\s+down|write\s+a\s+note(\s+that)?)\s*[:\s]*', caseSensitive: false), '')
+              .trim();
+          if (noteContent.isEmpty) noteContent = 'Personal Note';
+          await NotesKnowledgeService.instance.addNote(
+            title: 'Voice Note ${DateTime.now().month}/${DateTime.now().day}',
+            content: noteContent,
+          );
+          final reply = 'Note saved in your personal knowledge base, sir: "$noteContent".';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'KNOWLEDGE RECORD SAVED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = NotesKnowledgeService.instance.searchNotesSpoken(trimmed);
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'KNOWLEDGE RETRIEVAL';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.calendar:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('remind me to ') || lower.startsWith('set a reminder for ')) {
+          final reminderText = trimmed
+              .replaceFirst(RegExp(r'^(remind\s+me\s+to|set\s+a\s+reminder\s+for)\s+', caseSensitive: false), '')
+              .trim();
+          await CalendarReminderService.instance.addItem(
+            title: reminderText,
+            dateTime: DateTime.now().add(const Duration(hours: 1)),
+            isReminder: true,
+          );
+          final reply = 'I have set a reminder for "$reminderText", sir.';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'REMINDER SCHEDULED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = CalendarReminderService.instance.getTodayBriefingSpoken();
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'CALENDAR SCHEDULE';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.email:
+        final lowerEmail = trimmed.toLowerCase();
+        final isInboxCheck = lowerEmail.contains('read') ||
+            lowerEmail.contains('check') ||
+            lowerEmail.contains('inbox') ||
+            lowerEmail.contains('what are') ||
+            lowerEmail.contains('new') ||
+            lowerEmail.contains('recent');
+
+        String emailReply;
+        if (isInboxCheck) {
+          emailReply = await InboxService.instance.getEmailSummary();
+        } else {
+          final triage = await EmailTriageService.instance.triageEmail(trimmed);
+          emailReply = '${triage.summary} Priority is flagged as ${triage.priority.name}. Would you like me to open a draft reply for you, sir?';
+        }
+
+        _lastJarvisSpeech = emailReply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'EMAIL INBOX PROCESSED';
+        notifyListeners();
+        await _voice.speak(emailReply);
+        break;
+
+      case JarvisIntentType.message:
+        final lowerMsg = trimmed.toLowerCase();
+        final isSmsCheck = lowerMsg.contains('read') ||
+            lowerMsg.contains('check') ||
+            lowerMsg.contains('inbox') ||
+            lowerMsg.contains('what are') ||
+            lowerMsg.contains('recent message') ||
+            lowerMsg.contains('new message') ||
+            lowerMsg.contains('read my sms');
+
+        if (isSmsCheck) {
+          final smsReply = await InboxService.instance.getSmsSummary();
+          _lastJarvisSpeech = smsReply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'SMS INBOX PROCESSED';
+          notifyListeners();
+          await _voice.speak(smsReply);
+        } else {
+          final draftText = await MessageDraftingService.instance.draftMessageContent(prompt: trimmed);
+          final reply = 'I have prepared this message draft for you, sir: "$draftText". Would you like me to dispatch it?';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'MESSAGE DRAFT PREPARED';
+          notifyListeners();
+          await _voice.speak(reply);
+          await MessageDraftingService.instance.dispatchDraft(
+            MessageDraft(
+              channel: trimmed.toLowerCase().contains('whatsapp') ? MessageChannel.whatsapp : MessageChannel.sms,
+              recipient: '',
+              body: draftText,
+            ),
+          );
+        }
+        break;
+
+      case JarvisIntentType.vision:
+        final isScreen = trimmed.toLowerCase().contains('screen');
+        final ack = isScreen
+            ? 'Scanning active screen elements, sir.'
+            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OPTICAL SENSORS ACTIVE';
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final analysis = isScreen
+            ? await ProactiveAgentService.instance.analyzeCurrentScreen(userQuestion: trimmed)
+            : (await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed)).spokenSummary;
+
+        _lastJarvisSpeech = analysis;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
+        notifyListeners();
+        await _voice.speak(analysis);
+        break;
+
+      case JarvisIntentType.smartHome:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SMART HOME IOT // DISPATCHING';
+        notifyListeners();
+
+        final reply = await SmartHomeService.instance.handleVoiceCommand(trimmed);
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'SMART HOME ACTIVE';
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.commute:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // COMMUTE & TRAFFIC TELEMETRY';
+        notifyListeners();
+
+        final commute = await CommuteTrafficService.instance.checkCommute(destination: intent.toolArg);
+        _lastJarvisSpeech = commute.spokenSummary;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'COMMUTE REPORT';
+        notifyListeners();
+        await _voice.speak(commute.spokenSummary);
+        break;
+
+      case JarvisIntentType.macro:
+        final lowerMacro = trimmed.toLowerCase();
+        if (lowerMacro.startsWith('stop recording') || lowerMacro.startsWith('save macro')) {
+          final skill = await MacroRecorderService.instance.stopRecording();
+          final reply = skill != null
+              ? 'Macro "${skill.goal}" saved and codified into AGENT.md, sir.'
+              : 'Macro recording concluded, sir.';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          notifyListeners();
+          await _voice.speak(reply);
+        } else if (lowerMacro.startsWith('run macro') || lowerMacro.startsWith('replay macro')) {
+          final macroName = trimmed.replaceFirst(RegExp(r'^(run|replay)\s+macro\s+', caseSensitive: false), '').trim();
+          final match = await SkillMemoryService.instance.findMatch(macroName);
+          if (match != null) {
+            final reply = 'Replaying macro "${match.goal}", sir.';
+            _lastJarvisSpeech = reply;
+            _phase = JarvisPhase.speaking;
+            notifyListeners();
+            await _voice.speak(reply);
+            await MacroRecorderService.instance.replaySkill(match);
+          } else {
+            final reply = 'No matching macro found for "$macroName", sir.';
+            _lastJarvisSpeech = reply;
+            _phase = JarvisPhase.speaking;
+            notifyListeners();
+            await _voice.speak(reply);
+          }
+        } else {
+          final goal = intent.toolArg ?? 'Custom Task';
+          await MacroRecorderService.instance.startRecording(goal);
+          final reply = 'Macro recording started for "$goal", sir. Perform your actions, then say "save macro".';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.airGestures:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'AIR GESTURES SENSORY MATRIX';
+        notifyListeners();
+        final raw = (intent.toolArg ?? trimmed).toLowerCase();
+        final isOff = raw.contains('off') ||
+            raw.contains('disable') ||
+            raw.contains('deactivat') ||
+            raw.contains('stop');
+        String gestureReply;
+        if (isOff) {
+          await AirGestureService.instance.stop();
+          gestureReply = 'Iron Man zero-touch air gesture sensors disengaged, sir.';
+        } else {
+          await AirGestureService.instance.start();
+          gestureReply =
+              'Zero-touch air gestures engaged, sir. Wave over the screen to skip tracks, hover palm to pause, or double wave for instant screenshot.';
+        }
+        _lastJarvisSpeech = gestureReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(gestureReply);
+        break;
+
+      case JarvisIntentType.chargingTelemetry:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'ARC REACTOR CHARGING TELEMETRY';
+        notifyListeners();
+        ChargingTelemetryService.instance.showCinematicHud.value = true;
+        final chargingReport = await ChargingTelemetryService.instance.getSpokenTelemetry();
+        _lastJarvisSpeech = chargingReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(chargingReport);
+        break;
+
+      case JarvisIntentType.polyglotDiplomat:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATION';
+        notifyListeners();
+        _showModalSafely(const PolyglotDiplomatDialog());
+        const transAck =
+            'Polyglot Diplomat initialized, sir. Ready for real-time diplomatic translation.';
+        _lastJarvisSpeech = transAck;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(transAck);
+        break;
+
+      case JarvisIntentType.codeBlack:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CODE BLACK // HARDWARE LOCKOUT';
+        notifyListeners();
+        await CodeBlackService.instance.arm();
+        _phase = JarvisPhase.idle;
+        notifyListeners();
+        break;
+
+      case JarvisIntentType.floatingCopilot:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'HOLOGRAPHIC FLOATING CO-PILOT';
+        notifyListeners();
+        final rawCopilot = (intent.toolArg ?? trimmed).toLowerCase();
+        final isHide = rawCopilot.contains('hide') ||
+            rawCopilot.contains('close') ||
+            rawCopilot.contains('stop') ||
+            rawCopilot.contains('dismiss');
+        String copilotReply;
+        if (isHide) {
+          await FloatingCopilotService.instance.hideOverlay();
+          copilotReply = 'Floating co-pilot dismissed, sir.';
+        } else {
+          await FloatingCopilotService.instance.activateOverlay();
+          copilotReply =
+              'Holographic floating co-pilot active, sir. Hovering over active applications with live screen context triage.';
+        }
+        _lastJarvisSpeech = copilotReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(copilotReply);
+        break;
+
+      case JarvisIntentType.airspaceRadar:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'AIRSPACE & SATELLITE RADAR';
+        notifyListeners();
+        _showModalSafely(const AirspaceRadarDialog());
+        final radarReport = await AirspaceRadarService.instance.getSpokenAirspaceReport();
+        _lastJarvisSpeech = radarReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(radarReport);
+        break;
+
+      case JarvisIntentType.multiTaskDump:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'MULTI-TASK DECOUPLER';
+        notifyListeners();
+        final decoupledReport = await MultiTaskDecouplerService.instance.processBrainDump(trimmed);
+        _lastJarvisSpeech = decoupledReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(decoupledReport);
+        break;
+
+      case JarvisIntentType.opticalSolver:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'REAL-TIME OPTICAL HUD SOLVER';
+        notifyListeners();
+        _showModalSafely(const OpticalSolverDialog());
+        final solveResult =
+            await OpticalSolverService.instance.pointAndSolve(customQuery: trimmed);
+        _lastJarvisSpeech = solveResult.spokenSummary;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(solveResult.spokenSummary);
+        break;
+
+      case JarvisIntentType.networkAudit:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'NETWORK SECURITY AUDIT';
+        notifyListeners();
+        _showModalSafely(const NetworkAuditDialog());
+        final netReport = await NetworkAuditService.instance.getSpokenAuditReport();
+        _lastJarvisSpeech = netReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(netReport);
+        break;
+
+      case JarvisIntentType.multistep:
+        final ack = 'Initiating multi-step execution protocol for you, sir.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'MULTI-STEP PROTOCOL';
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final steps = await ProactiveAgentService.instance.planMultiStepGoal(trimmed);
+        final planSpoken = 'I have broken down this goal into ${steps.length} sequential steps, sir: ${steps.join("; ")}. Commencing first step now.';
+        _lastJarvisSpeech = planSpoken;
+        notifyListeners();
+        await _voice.speak(planSpoken);
+        break;
+
+      case JarvisIntentType.system:
+        await _handleSystemCommand(intent.systemCommand ?? '', intent.spoken);
+        break;
+
+      case JarvisIntentType.action:
+        final goal = intent.actionGoal ?? trimmed;
+
+        // Foundation: Permission system check before risky actions
+        if (SettingsService.instance.confirmRiskyActions) {
+          final assessment = SecurityAlertService.instance.evaluateActionRisk(goal);
+          if (assessment.requiresConfirmation) {
+            final confirmPrompt = 'Sir, this action involves high-risk operations: ${assessment.reason}. Do you confirm execution?';
+            _lastJarvisSpeech = confirmPrompt;
+            _phase = JarvisPhase.speaking;
+            _statusMessage = 'CONFIRMATION REQUIRED // HIGH RISK';
+            notifyListeners();
+            await _voice.speak(confirmPrompt);
+            await SecurityAlertService.instance.dispatchSecurityAlert('High-risk operation prompted: $goal');
+            return;
+          }
+        }
+
+        _currentTaskGoal = goal;
+        final ack = intent.spoken.isNotEmpty
+            ? intent.spoken
+            : 'Right away, sir. I will take care of that on your device right now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'PROTOCOL ENGAGED // $goal'.toUpperCase();
+        notifyListeners();
+
+        // 1. Speak acknowledgment completely
+        await _voice.speak(ack);
+
+        // 2. Execute automation task on device
+        _phase = JarvisPhase.executing;
+        notifyListeners();
+        final status = await _executor.executeTask(goal);
+
+        // 3. Deliver completion with caring follow-up
+        _phase = JarvisPhase.speaking;
+        if (status == TaskStatus.success) {
+          const successSpeech = 'I have completed that task for you, sir. Is there anything else you need?';
+          _lastJarvisSpeech = successSpeech;
+          _statusMessage = 'PROTOCOL FINISHED // SUCCESS';
+          notifyListeners();
+          await _voice.speak(successSpeech);
+        } else if (status == TaskStatus.cancelled) {
+          const cancelledSpeech = 'The task was cancelled, sir. What would you like me to do instead?';
+          _lastJarvisSpeech = cancelledSpeech;
+          _statusMessage = 'PROTOCOL CANCELLED';
+          notifyListeners();
+          await _voice.speak(cancelledSpeech);
+        } else {
+          const failedSpeech =
+              'I encountered an obstruction with that task on the screen, sir. Would you like me to try again?';
+          _lastJarvisSpeech = failedSpeech;
+          _statusMessage = 'PROTOCOL FAILED';
+          notifyListeners();
+          await _voice.speak(failedSpeech);
+        }
+        break;
+
+      case JarvisIntentType.chat:
+        String chatAnswer = intent.spoken;
+        if (chatAnswer.trim().isEmpty ||
+            chatAnswer.length < 25 ||
+            chatAnswer.toLowerCase().contains('at your service') ||
+            chatAnswer.toLowerCase().contains('what would you like me to do')) {
+          _phase = JarvisPhase.thinking;
+          _statusMessage = 'PROCESSING // NEURAL CORE';
+          notifyListeners();
+          chatAnswer = await _ai.chat(message: trimmed, history: _dialogHistory);
+        }
+        _lastJarvisSpeech = chatAnswer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'VOCAL RESPONSE COMPLETE';
+        notifyListeners();
+        await _voice.speak(chatAnswer);
+        break;
+    }
+
+    // Persist conversation turn and auto-extract user preferences/facts across sessions
+    unawaited(ConversationalMemoryService.instance.recordTurn(trimmed, _lastJarvisSpeech));
+
+    // Follow-up hands-free continuous listening
+    await _startFollowUpListening();
+  }
+
+  Future<void> _handleSystemCommand(String cmd, String spoken) async {
+    final speech = spoken.isNotEmpty ? spoken : PersonalityService.instance.getGeneralAck();
+    _lastJarvisSpeech = speech;
+    _phase = JarvisPhase.speaking;
+    _statusMessage = 'SYSTEM OVERRIDE // $cmd'.toUpperCase();
+    notifyListeners();
+
+    await _voice.speak(speech);
+
+    switch (cmd) {
+      case 'volume_up':
+        await _system.volumeUp();
+        break;
+      case 'volume_down':
+        await _system.volumeDown();
+        break;
+      case 'mute':
+        await _system.setMuted(true);
+        break;
+      case 'unmute':
+        await _system.setMuted(false);
+        break;
+      case 'brightness_up':
+        final current = await _system.getBrightness() ?? 0.5;
+        await _system.setBrightness((current + 0.2).clamp(0.0, 1.0));
+        break;
+      case 'brightness_down':
+        final current = await _system.getBrightness() ?? 0.5;
+        await _system.setBrightness((current - 0.2).clamp(0.0, 1.0));
+        break;
+      case 'screenshot':
+        await _automation.takeScreenshotBase64();
+        break;
+      case 'home':
+        await _automation.pressHome();
+        break;
+      case 'back':
+        await _automation.pressBack();
+        break;
+    }
+
+    if (_shouldListenContinuously) {
+      _standDown();
+    }
+  }
+
+  /// Resolves the exact top YouTube video ID for instant playback without search friction.
+  Future<String?> _resolveTopYouTubeVideoId(String query) async {
+    try {
+      final url = Uri.parse(
+        'https://www.youtube.com/results?search_query=${Uri.encodeComponent(query)}',
+      );
+      final resp = await http.get(url, headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      }).timeout(const Duration(seconds: 4));
+      if (resp.statusCode == 200) {
+        final match =
+            RegExp(r'watch\?v=([a-zA-Z0-9_-]{11})').firstMatch(resp.body);
+        if (match != null) {
+          return match.group(1);
+        }
+      }
+    } catch (e) {
+      debugPrint('[JarvisService] YouTube top video lookup error: $e');
+    }
+    return null;
+  }
+}
+,
+      r'\b(yes|yeah|yep|yup|sure|please|do\s+it|turn\s+it\s+on|turn\s+on|engage|activate|ok|okay|go\s+ahead|proceed|definitely|affirmative|sounds\s+good|why\s+not|let\x27s\s+do\s+it)\b',
+    ];
+    for (final pattern in patterns) {
+      if (RegExp(pattern, caseSensitive: false).hasMatch(lower)) return true;
+    }
+    return false;
+  }
+
+  /// Checks if spoken response is a negative dismissal.
+  static bool isNegativeResponse(String input) {
+    final lower = input.trim().toLowerCase();
+    final patterns = [
+      r'\b(no|nope|nah|not\s+now|never\s+mind|nevermind|don\x27t|cancel|later|dismiss|leave\s+it|negative|stop|skip)\b',
+    ];
+    for (final pattern in patterns) {
+      if (RegExp(pattern, caseSensitive: false).hasMatch(lower)) return true;
+    }
+    return false;
+  }
+
+  /// Toggles speech recognition manually via the UI.
+  Future<void> toggleListening() async {
+    if (_phase == JarvisPhase.listening) {
+      await stopListening();
+      if (_shouldListenContinuously) {
+        _standDown();
+        await startListening();
+      }
+    } else {
+      _wakeUp();
+      await startListening(manual: true);
+    }
+  }
+
+  /// Begins recording voice input.
+  Future<bool> startListening({bool manual = false}) async {
+    await _voice.stopSpeaking();
+
+    if (manual) {
+      _wakeUp();
+    }
+
+    // Google Home / Google Assistant Architecture:
+    // Only set phase to listening if awake or manual tap.
+    // In passive standby background waiting for wake-word, stay in idle so UI is calm and does NOT flicker!
+    if (_isAwake || !_shouldListenContinuously) {
+      _phase = JarvisPhase.listening;
+      _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+    } else {
+      _phase = JarvisPhase.idle;
+      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+    }
+    notifyListeners();
+
+    final started = await _voice.startListening(
+      continuous: _shouldListenContinuously,
+      manual: manual,
+      onResult: (words, isFinal, candidates) {
+        _lastUserSpeech = words;
+        debugPrint('[JarvisService] Heard: "$words" (candidates: $candidates, isFinal: $isFinal, isAwake: $_isAwake)');
+
+        // Immediate wake detection on partial speech stream
+        if (_shouldListenContinuously && !_isAwake) {
+          String? wakeCmd = _extractWakeCommand(words);
+          if (wakeCmd == null) {
+            for (final cand in candidates) {
+              final cCmd = _extractWakeCommand(cand);
+              if (cCmd != null) {
+                wakeCmd = cCmd;
+                break;
+              }
+            }
+          }
+          if (wakeCmd != null) {
+            _wakeUp();
+            onWakeWordTriggered?.call();
+            HapticFeedback.mediumImpact();
+
+            // Set visual listening state immediately, but NEVER cut off the user!
+            // Let the user finish speaking their full command until silence / isFinal.
+            _phase = JarvisPhase.listening;
+            _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+            notifyListeners();
+          }
+        } else if (_isAwake) {
+          notifyListeners();
+        }
+
+        // Voice Activity / Silence Debounce Timer:
+        // When awake or wake-word is present, whenever user stops speaking (silence for ~950ms),
+        // automatically trigger command processing so the user never gets stuck waiting on Android's silence detector!
+        final hasWake = _extractWakeCommand(words) != null ||
+            candidates.any((c) => _extractWakeCommand(c) != null);
+        if (_isAwake || hasWake) {
+          _speechSilenceTimer?.cancel();
+          _speechSilenceTimer = Timer(const Duration(milliseconds: 950), () {
+            final trimmed = _lastUserSpeech.trim();
+            if (trimmed.isNotEmpty) {
+              debugPrint('[JarvisService] Silence debounce timer fired for: "$trimmed"');
+              unawaited(_handleSpeechResult(trimmed, candidates));
+            }
+          });
+        }
+
+        if (isFinal) {
+          _speechSilenceTimer?.cancel();
+          final trimmed = words.trim();
+          if (trimmed.isNotEmpty) {
+            unawaited(_handleSpeechResult(trimmed, candidates));
+          } else {
+            _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+            _statusMessage = _shouldListenContinuously
+                ? (_isAwake
+                    ? 'DİNLİYOR // MİKROFON AÇIK'
+                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+            notifyListeners();
+          }
+        }
+      },
+    );
+
+    if (!started) {
+      _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+      _statusMessage = 'MİKROFON KULLANILAMIYOR';
+      notifyListeners();
+    }
+    return started;
+  }
+
+  /// Handles incoming speech results, applying wake-word filtering in continuous mode.
+  Future<void> _handleSpeechResult(String speech, [List<String>? candidates]) async {
+    _speechSilenceTimer?.cancel();
+
+    // Guard against duplicate execution while already busy
+    if (_phase == JarvisPhase.thinking ||
+        _phase == JarvisPhase.executing ||
+        _phase == JarvisPhase.speaking) {
+      return;
+    }
+
+    final trimmed = speech.trim();
+    if (trimmed.isEmpty) return;
+
+    _followUpSilenceTimer?.cancel();
+    _isInFollowUp = false;
+
+    _lastUserSpeech = '';
+    debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
+
+    // Proactive conversational confirmation check:
+    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
+    if (_pendingProactiveSuggestion != null) {
+      final suggestion = _pendingProactiveSuggestion!;
+      _pendingProactiveSuggestion = null;
+      _proactiveConfirmationTimer?.cancel();
+
+      final answer = trimmed.toLowerCase();
+      final isAffirmative = isAffirmativeResponse(answer);
+      final isNegative = isNegativeResponse(answer);
+
+      debugPrint('[JarvisService] Proactive response: "$answer" (yes: $isAffirmative, no: $isNegative)');
+
+      if (isAffirmative) {
+        _wakeUp();
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CONFIRMED // ENGAGING ${suggestion.title.toUpperCase()}';
+        notifyListeners();
+
+        const ack = 'Hemen efendim. İşlemi başlatıyorum.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(ack);
+
+        await processCommand(suggestion.actionGoal);
+        return;
+      } else if (isNegative) {
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'İPTAL // BEKLEMEDE';
+        const ack = 'Anladım efendim. Beklemedeyim.';
+        _lastJarvisSpeech = ack;
+        notifyListeners();
+        await _voice.speak(ack);
+        _standDown();
+        return;
+      }
+    }
+
+    // 1. If continuous listening is NOT active (user explicitly pressed talk button in Agent/Chat mode):
+    if (!_shouldListenContinuously) {
+      _wakeUp();
+      await processCommand(trimmed);
+      return;
+    }
+
+    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    var wakeCommand = _extractWakeCommand(trimmed);
+    if (wakeCommand == null && candidates != null) {
+      for (final cand in candidates) {
+        final cCmd = _extractWakeCommand(cand);
+        if (cCmd != null) {
+          wakeCommand = cCmd;
+          break;
+        }
+      }
+    }
+
+    if (wakeCommand != null) {
+      _wakeUp();
+      onWakeWordTriggered?.call();
+      HapticFeedback.mediumImpact();
+
+      if (wakeCommand.isEmpty) {
+        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        _wakeUp();
+        _phase = JarvisPhase.listening;
+        _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+        notifyListeners();
+        return;
+      } else {
+        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        await processCommand(wakeCommand);
+        return;
+      }
+    }
+
+    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // Execute direct follow-up commands!
+    if (_isAwake) {
+      await processCommand(trimmed);
+      return;
+    }
+
+    // 4. In background standby mode, user spoke WITHOUT wake word:
+    // (e.g. talking to a friend on the desk):
+    // COMPLETELY IGNORE ambient chatter to never interrupt room conversation!
+    debugPrint('[JarvisService] Ambient conversation ignored: "$trimmed"');
+    _standDown();
+  }
+
+  /// Stops voice input.
+  Future<void> stopListening() async {
+    _followUpSilenceTimer?.cancel();
+    _isInFollowUp = false;
+    _speechSilenceTimer?.cancel();
+    await _voice.stopListening();
+    if (_phase == JarvisPhase.listening) {
+      _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+    }
+  }
+
+  /// Aborts any running task immediately.
+  Future<void> abortTask() async {
+    _standDown();
+    if (_executor.isBusy) {
+      _executor.cancel();
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'GÖREV İPTAL EDİLDİ // BEKLEMEDE';
+      const speech = 'Görevi hemen iptal ediyorum efendim.';
+      _lastJarvisSpeech = speech;
+      notifyListeners();
+      await _voice.speak(speech);
+    } else {
+      await _voice.stopSpeaking();
+      _phase = JarvisPhase.idle;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+    }
+  }
+
+  /// Processes a voice command through JARVIS intelligence.
+  Future<void> processCommand(String command) async {
+    _wakeUp();
+
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return;
+
+    _lastUserSpeech = trimmed;
+    _phase = JarvisPhase.thinking;
+    _statusMessage = 'DÜŞÜNÜYOR // KOMUT İNCELENİYOR';
+    notifyListeners();
+
+    final lower = trimmed.toLowerCase();
+
+    // 1. Fast cancel / abort check
+    if (lower == 'dur' ||
+        lower == 'sus' ||
+        lower == 'iptal' ||
+        lower == 'görevi iptal et' ||
+        lower == 'stop' ||
+        lower == 'cancel' ||
+        lower == 'abort' ||
+        lower.contains('stop task') ||
+        lower.contains('cancel task')) {
+      await abortTask();
+      return;
+    }
+
+    // 2. Stand down / Sleep commands
+    if (lower == 'uyku moduna geç' ||
+        lower == 'beklemeye geç' ||
+        lower == 'iyi geceler' ||
+        lower == 'stand down' ||
+        lower == 'go to sleep' ||
+        lower == 'sleep' ||
+        lower == 'goodnight' ||
+        lower == 'thank you' ||
+        lower == 'thanks' ||
+        lower == 'no thanks' ||
+        lower == 'no thank you' ||
+        lower == 'that will be all' ||
+        lower == "that's all" ||
+        lower == 'that is all' ||
+        lower == "i'm good" ||
+        lower == 'im good') {
+      _standDown();
+      await _voice.stopListening();
+      final reply = PersonalityService.instance.getStandDown();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 2b. Autonomous Form Filling (USER.md + Long-Term Memory)
+    if (lower.contains('fill this form') ||
+        lower.contains('fill the form') ||
+        lower.contains('fill form') ||
+        lower.contains('fill out this form') ||
+        lower.contains('autofill this form') ||
+        lower.contains('autofill form') ||
+        lower.contains('fill my details') ||
+        lower.contains('fill my info') ||
+        lower.contains('fill my information')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'FORM DOLDURMA // ALANLAR İNCELENİYOR';
+      notifyListeners();
+
+      final result = await FormFillingService.instance.fillActiveForm();
+      _lastJarvisSpeech = result;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'FORM DOLDURMA TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(result);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3. Hands-Free Always-On toggle commands
+    if (lower == 'sürekli dinlemeyi aç' ||
+        lower == 'eller serbest' ||
+        lower == 'always on' ||
+        lower == 'activate always on' ||
+        lower == 'hands free' ||
+        lower == 'continuous listening' ||
+        lower == 'turn on always on' ||
+        lower == 'enable always on') {
+      await SettingsService.instance.setJarvisAlwaysOn(true);
+      ensureAlwaysOnRunning();
+      const reply = 'Sürekli dinleme etkinleştirildi efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SÜREKLİ DİNLEME AÇIK';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    if (lower == 'sürekli dinlemeyi kapat' ||
+        lower == 'turn off always on' ||
+        lower == 'disable always on' ||
+        lower == 'deactivate always on' ||
+        lower == 'stop always on') {
+      await SettingsService.instance.setJarvisAlwaysOn(false);
+      stopAlwaysOn();
+      const reply = 'Sürekli dinleme kapatıldı efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 3b. Hermes Self-Evolution triggers
+    if (lower == 'self evolve' ||
+        lower == 'evolve context' ||
+        lower == 'run self evolution' ||
+        lower == 'hermes evolution' ||
+        lower == 'evolve yourself' ||
+        lower == 'update your protocols' ||
+        lower == 'evolve memory') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HERMES BAĞLAMI HAZIRLANIYOR';
+      notifyListeners();
+      await HermesEvolutionService.instance.evolveContext();
+      final factsCount = ConversationalMemoryService.instance.facts.length;
+      final workflowCount = WorkflowService.instance.workflows.length;
+      final reply =
+          'Hermes self-evolution cycle completed, sir. Synthesized $factsCount user memory facts and $workflowCount active protocols across SOUL.md, USER.md, and AGENT.md.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'KENDİNİ GELİŞTİRME TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3c. Interactive Multi-Task Decoupler Dialog
+    if (lower == 'open brain dump' ||
+        lower == 'show brain dump' ||
+        lower == 'open multitask' ||
+        lower == 'show multitask' ||
+        lower == 'multitask dialog' ||
+        lower == 'decoupler dialog') {
+      _showModalSafely(const BrainDumpDialog());
+      const reply = 'Multi-Task Decoupler interface opened, sir. Ready for your compound instructions.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ÇOKLU GÖREV MODU AÇIK';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 3d. Autonomous Macro Recorder fast triggers
+    if (lower.startsWith('stop recording') ||
+        lower.startsWith('save macro') ||
+        lower.startsWith('finish recording')) {
+      if (MacroRecorderService.instance.isRecording) {
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CODIFYING AUTONOMOUS MACRO // AGENT.MD';
+        notifyListeners();
+        final skill = await MacroRecorderService.instance.stopRecording();
+        final reply = skill != null
+            ? 'Macro "${skill.goal}" successfully recorded and codified into AGENT.md, sir.'
+            : 'Macro recording concluded, sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'MAKRO KAYDEDİLDİ';
+        notifyListeners();
+        await _voice.speak(reply);
+        await _startFollowUpListening();
+        return;
+      }
+    }
+
+    if (lower.startsWith('record macro ') ||
+        lower.startsWith('start recording ') ||
+        lower.startsWith('teach jarvis ')) {
+      final macroGoal = trimmed
+          .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
+          .trim();
+      await MacroRecorderService.instance.startRecording(macroGoal.isNotEmpty ? macroGoal : 'Custom Task');
+      final reply = 'Macro recording engaged for "${macroGoal.isNotEmpty ? macroGoal : 'Custom Task'}", sir. Demonstrate the actions on your screen and say "save macro" when finished.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'RECORDING MACRO: ${macroGoal.toUpperCase()}';
+      notifyListeners();
+      await _voice.speak(reply);
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    if (lower.startsWith('run macro ') || lower.startsWith('replay macro ')) {
+      final macroName = trimmed
+          .replaceFirst(RegExp(r'^(run\s+macro|replay\s+macro)\s+', caseSensitive: false), '')
+          .trim();
+      final match = await SkillMemoryService.instance.findMatch(macroName);
+      if (match != null) {
+        final reply = 'Executing macro "${match.goal}", sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'REPLAYING MACRO: ${match.goal.toUpperCase()}';
+        notifyListeners();
+        await _voice.speak(reply);
+        await MacroRecorderService.instance.replaySkill(match);
+      } else {
+        final reply = 'I could not find a recorded macro matching "$macroName", sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(reply);
+      }
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3c. Jarvis Eye Optical Perception fast trigger
+    if (lower.contains('look at this') ||
+        lower.contains('what is this') ||
+        lower.contains('scan this') ||
+        lower.contains('inspect this') ||
+        lower.contains('jarvis eye') ||
+        lower.contains('what do you see')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'OPTİK SENSÖRLER AÇIK // TARANIYOR';
+      notifyListeners();
+
+      const ack = 'Optical sensors engaged, sir. Inspecting the subject now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(ack);
+
+      final result = await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed);
+      _lastJarvisSpeech = result.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(result.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3d. Smart Home & IoT Automation fast trigger
+    if (lower.contains('smart light') ||
+        lower.contains('smart home') ||
+        lower.contains('living room light') ||
+        lower.contains('turn on the light') ||
+        lower.contains('turn off the light') ||
+        lower.contains('dim the light') ||
+        lower.contains('turn on light') ||
+        lower.contains('turn off light') ||
+        lower.contains('desk lamp')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SMART HOME IOT // DISPATCHING';
+      notifyListeners();
+
+      final reply = await SmartHomeService.instance.handleVoiceCommand(trimmed);
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SMART HOME ACTIVE';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e. Proactive Commute & Traffic fast trigger
+    if (lower.contains('how is traffic') ||
+        lower.contains('commute to') ||
+        lower.contains('traffic to') ||
+        lower.contains('when should i leave') ||
+        lower == 'traffic' ||
+        lower == 'commute') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // COMMUTE & TRAFFIC TELEMETRY';
+      notifyListeners();
+
+      String? dest;
+      if (lower.contains(' to ')) {
+        dest = trimmed.split(RegExp(r'\s+to\s+', caseSensitive: false)).last.trim();
+      }
+
+      final commute = await CommuteTrafficService.instance.checkCommute(destination: dest);
+      _lastJarvisSpeech = commute.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'COMMUTE REPORT';
+      notifyListeners();
+      await _voice.speak(commute.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-1. Superpower: Screen & Article Summarization
+    if (lower.contains('summarize this screen') ||
+        lower.contains('summarize this article') ||
+        lower.contains('summarize screen') ||
+        lower.contains('summarize article') ||
+        lower.contains('what is on my screen') ||
+        lower.contains('summarize page') ||
+        lower.contains('summarize the page') ||
+        lower.contains('read this article') ||
+        lower.contains('article summary')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // SUMMARIZING ARTICLE';
+      notifyListeners();
+
+      final ack = 'Analyzing foreground screen article, sir. One moment.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(ack);
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'GÜNDEM ÖZETİ HAZIRLANIYOR';
+      notifyListeners();
+
+      final summary = await JarvisToolsService.instance.summarizeForegroundScreen();
+      _lastJarvisSpeech = summary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ARTICLE SUMMARY READY';
+      notifyListeners();
+      await _voice.speak(summary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-2. Sentry Protocol & Sentry Mode (100% Equivalent Tactical Anti-Theft Watchdog)
+    final isSentryCommand = lower.contains('sentry') ||
+        lower.contains('centry') ||
+        lower.contains('century protocol') ||
+        lower.contains('century mode') ||
+        lower.contains('guard my phone') ||
+        lower.contains('watch my phone') ||
+        lower.contains('anti theft') ||
+        lower.contains('anti-theft') ||
+        lower.contains('watchdog protocol') ||
+        lower.contains('watchdog mode') ||
+        (SentryService.instance.isArmed &&
+            (lower.contains('deactivat') ||
+             lower.contains('disarm') ||
+             lower.contains('stand down') ||
+             lower.contains('stop sentry') ||
+             lower.contains('protocol') ||
+             lower.contains('protocal')));
+
+    if (isSentryCommand) {
+      _phase = JarvisPhase.thinking;
+      notifyListeners();
+
+      final isDisarm = lower.contains('deactivat') ||
+          lower.contains('de-activate') ||
+          lower.contains('de activate') ||
+          lower.contains('d-activate') ||
+          lower.contains('d activate') ||
+          lower.contains('the activate') ||
+          lower.contains('disarm') ||
+          lower.contains('turn off') ||
+          lower.contains('switch off') ||
+          lower.contains('shut down') ||
+          lower.contains('stand down') ||
+          lower.contains('disable') ||
+          lower.contains('stop') ||
+          lower.contains('cancel') ||
+          lower.contains('exit') ||
+          lower.contains('unarm') ||
+          lower.contains('de-arm') ||
+          lower.contains('de arm') ||
+          (SentryService.instance.isArmed &&
+              !lower.contains('activat') &&
+              !lower.contains('arm') &&
+              !lower.contains('engage') &&
+              !lower.contains('enable') &&
+              !lower.contains('turn on'));
+
+      if (isDisarm) {
+        _statusMessage = 'SENTRY PROTOCOL // DISARMING';
+        notifyListeners();
+        await SentryService.instance.disarmSentry();
+      } else {
+        _statusMessage = 'SENTRY PROTOCOL // ARMING WATCHDOG';
+        notifyListeners();
+        await SentryService.instance.armSentry();
+      }
+      _phase = JarvisPhase.idle;
+      notifyListeners();
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    // 3e-2b. Creator & Builder Identity (Built by Abuzar)
+    if (lower.contains('who built you') ||
+        lower.contains('who created you') ||
+        lower.contains('who made you') ||
+        lower.contains('who is your creator') ||
+        lower.contains('who is your developer') ||
+        lower.contains('who is your builder') ||
+        lower.contains('who developed you') ||
+        lower.contains('who designed you') ||
+        lower.contains('who programmed you') ||
+        lower.contains('who build you') ||
+        lower.contains('who design you') ||
+        lower.contains('who coded you') ||
+        lower.contains('who write you')) {
+      _phase = JarvisPhase.thinking;
+      notifyListeners();
+
+      final reply = PersonalityService.instance.getCreatorAnswer();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'CREATOR // ABUZAR';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 1: 🖐️ Iron Man Zero-Touch Air Gestures
+    // -----------------------------------------------------------------
+    if (lower.contains('air gesture') ||
+        lower.contains('air gestures') ||
+        lower.contains('zero touch') ||
+        lower.contains('touchless') ||
+        lower.contains('hand wave gesture')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'AIR GESTURES SENSORY MATRIX';
+      notifyListeners();
+      final isOff = lower.contains('off') ||
+          lower.contains('disable') ||
+          lower.contains('deactivat') ||
+          lower.contains('stop');
+      String reply;
+      if (isOff) {
+        await AirGestureService.instance.stop();
+        reply = 'Iron Man zero-touch air gesture sensors disengaged, sir.';
+      } else {
+        await AirGestureService.instance.start();
+        reply =
+            'Zero-touch air gestures engaged, sir. Wave hand to skip music, hover palm to pause, or double wave for instant screenshot.';
+      }
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 2: ⚡ Arc Reactor Charging Telemetry
+    // -----------------------------------------------------------------
+    if (lower.contains('charging telemetry') ||
+        lower.contains('arc reactor status') ||
+        lower.contains('arc reactor telemetry') ||
+        lower.contains('charge speed') ||
+        lower.contains('charging speed') ||
+        lower.contains('charging wattage')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'ARC REACTOR CHARGING TELEMETRY';
+      notifyListeners();
+      ChargingTelemetryService.instance.showCinematicHud.value = true;
+      final reply = await ChargingTelemetryService.instance.getSpokenTelemetry();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 3: 🌐 Polyglot Diplomat (Live Two-Way Voice Translator)
+    // -----------------------------------------------------------------
+    if (lower.startsWith('translate ') && lower.contains(' to ')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATING';
+      notifyListeners();
+      final phrase = trimmed
+          .replaceFirst(RegExp(r'^translate\s+', caseSensitive: false), '')
+          .split(RegExp(r'\s+to\s+', caseSensitive: false))
+          .first
+          .trim();
+      final target = trimmed
+          .split(RegExp(r'\s+to\s+', caseSensitive: false))
+          .last
+          .trim();
+      final res = await PolyglotDiplomatService.instance
+          .translate(text: phrase, toLang: target);
+      final reply = 'Translated to $target, sir: $res';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    if (lower.contains('polyglot') ||
+        lower.contains('live translator') ||
+        lower.contains('voice translator') ||
+        lower.startsWith('translate between') ||
+        lower.contains('diplomat translator')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATOR';
+      notifyListeners();
+      _showModalSafely(const PolyglotDiplomatDialog());
+      const reply =
+          'Polyglot Diplomat active, sir. Ready for real-time diplomatic two-way voice translation.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 4: 🎭 "Code Black" / Deceptive Lockout Screen
+    // -----------------------------------------------------------------
+    if (lower.contains('code black') ||
+        lower.contains('deceptive lockout') ||
+        lower.contains('kernel panic screen') ||
+        lower.contains('emergency lockdown')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'CODE BLACK // HARDWARE LOCKOUT';
+      notifyListeners();
+      await CodeBlackService.instance.arm();
+      _phase = JarvisPhase.idle;
+      notifyListeners();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 5: 👁️ Holographic Floating Co-Pilot
+    // -----------------------------------------------------------------
+    if (lower.contains('floating copilot') ||
+        lower.contains('floating assistant') ||
+        lower.contains('screen copilot') ||
+        lower.contains('screen assistant')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HOLOGRAPHIC FLOATING CO-PILOT';
+      notifyListeners();
+      final isOff = lower.contains('hide') ||
+          lower.contains('close') ||
+          lower.contains('stop') ||
+          lower.contains('dismiss');
+      String reply;
+      if (isOff) {
+        await FloatingCopilotService.instance.hideOverlay();
+        reply = 'Floating co-pilot dismissed, sir.';
+      } else {
+        await FloatingCopilotService.instance.activateOverlay();
+        reply =
+            'Holographic floating co-pilot active, sir. Standing by above active applications with contextual screen triage.';
+      }
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 6: 📡 Overhead Airspace & Satellite Radar
+    // -----------------------------------------------------------------
+    if (lower.contains('flying above me') ||
+        lower.contains('what is flying') ||
+        lower.contains('scan airspace') ||
+        lower.contains('overhead flights') ||
+        lower.contains('airspace radar') ||
+        lower.contains('where is the iss') ||
+        lower.contains('satellite pass')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'AIRSPACE & SATELLITE RADAR SWEEP';
+      notifyListeners();
+      _showModalSafely(const AirspaceRadarDialog());
+      final reply = await AirspaceRadarService.instance.getSpokenAirspaceReport();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 7: 🧠 "Chaotic Brain Dump" Multi-Task Decoupler
+    // -----------------------------------------------------------------
+    if (MultiTaskDecouplerService.instance.isMultiTaskDump(trimmed)) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'DECOUPLING MULTI-TASK DUMP';
+      notifyListeners();
+      const ack =
+          'Deconstructing your multi-task dump into parallel directives, sir. Executing now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final dumpFuture = MultiTaskDecouplerService.instance.processBrainDump(trimmed);
+      await ackFuture;
+      final summary = await dumpFuture;
+      _lastJarvisSpeech = summary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'MULTI-TASK EXECUTION COMPLETE';
+      notifyListeners();
+      await _voice.speak(summary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 8: 👁️ Real-Time Optical HUD Solver
+    // -----------------------------------------------------------------
+    if (lower.contains('solve this') ||
+        lower.contains('solve equation') ||
+        lower.contains('optical solver') ||
+        lower.contains('inspect error') ||
+        lower.contains('split bill') ||
+        lower.contains('split this bill') ||
+        lower.contains('solve math') ||
+        lower.contains('analyze circuit')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'REAL-TIME OPTICAL HUD SOLVER';
+      notifyListeners();
+      _showModalSafely(const OpticalSolverDialog());
+      const ack = 'Target acquired in optical viewfinder, sir. Solving now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final solveFuture = OpticalSolverService.instance.pointAndSolve(customQuery: trimmed);
+      await ackFuture;
+      final res = await solveFuture;
+      _lastJarvisSpeech = res.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TARGET RESOLVED';
+      notifyListeners();
+      await _voice.speak(res.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 9: 🛡️ Network Cyber Security Audit & Wi-Fi Scanner
+    // -----------------------------------------------------------------
+    if (lower.contains('audit network') ||
+        lower.contains('audit my network') ||
+        lower.contains('scan wifi') ||
+        lower.contains('who is on my wifi') ||
+        lower.contains('network devices') ||
+        lower.contains('network security') ||
+        lower.contains('port scan')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'TACTICAL NETWORK CYBER AUDIT';
+      notifyListeners();
+      _showModalSafely(const NetworkAuditDialog());
+      const ack =
+          'Initiating tactical network cyber security audit on your local subnet, sir.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final auditFuture = NetworkAuditService.instance.getSpokenAuditReport();
+      await ackFuture;
+      final report = await auditFuture;
+      _lastJarvisSpeech = report;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'NETWORK AUDIT COMPLETE';
+      notifyListeners();
+      await _voice.speak(report);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-3. Superpower: Direct Hardware Specs & Telemetry (No UI Taps / No Settings)
+    if (lower.contains('system specs') ||
+        lower.contains('phone specs') ||
+        lower.contains('hardware specs') ||
+        lower.contains('device specs') ||
+        lower.contains('how much ram') ||
+        lower.contains('ram info') ||
+        lower.contains('storage space') ||
+        lower.contains('rom space') ||
+        lower.contains('how much free space') ||
+        lower.contains('how much space is free') ||
+        lower.contains('phone specifications') ||
+        lower.contains('android version')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HARDWARE TELEMETRY // DIRECT';
+      notifyListeners();
+
+      final specs = await SystemDiagnosticsService.instance.getDiagnosticsSpoken();
+      _lastJarvisSpeech = specs;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TELEMETRY NOMINAL';
+      notifyListeners();
+      await _voice.speak(specs);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-4. Superpower: Top Installed Applications (No UI Taps)
+    if (lower.contains('installed apps') ||
+        lower.contains('list apps') ||
+        lower.contains('what apps are installed') ||
+        lower.contains('list my apps') ||
+        lower.contains('top installed apps') ||
+        lower.contains('top 10 apps')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'INDEXING // INSTALLED APPS';
+      notifyListeners();
+
+      final appsSpoken = await AppUsageService.instance.getInstalledAppsSpoken();
+      _lastJarvisSpeech = appsSpoken;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'APPS INDEXED';
+      notifyListeners();
+      await _voice.speak(appsSpoken);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-5. Superpower: App Usage & Screen Time Statistics (No UI Taps)
+    if (lower.contains('most used apps') ||
+        lower.contains('apps i used the most') ||
+        lower.contains('apps i use the most') ||
+        lower.contains('which apps i used') ||
+        lower.contains('screen time') ||
+        lower.contains('app usage') ||
+        lower.contains('top used apps')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'USAGE TELEMETRY // STATS';
+      notifyListeners();
+
+      final usageSpoken = await AppUsageService.instance.getTopUsedAppsSpoken();
+      _lastJarvisSpeech = usageSpoken;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'USAGE STATS COMPLETE';
+      notifyListeners();
+      await _voice.speak(usageSpoken);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-6. Superpower: Environmental Ears & Sound Radar
+    if (lower.contains('what song is playing') ||
+        lower.contains('identify this song') ||
+        lower.contains('name this song') ||
+        lower.contains('what music is this') ||
+        lower.contains('scan ambient sound') ||
+        lower.contains('sound radar') ||
+        lower.contains('listen to the room') ||
+        lower.contains('what do you hear')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'ACOUSTIC SENSORS ACTIVE';
+      notifyListeners();
+
+      final isMusic = lower.contains('song') || lower.contains('music');
+      final result = isMusic
+          ? await SoundRadarService.instance.identifyMusic()
+          : await SoundRadarService.instance.scanAmbientEnvironment();
+
+      _lastJarvisSpeech = result;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ACOUSTIC SCAN COMPLETE';
+      notifyListeners();
+      await _voice.speak(result);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-7. Superpower: Direct Phone Storage File CRUD (No UI Taps / No Settings)
+    final isStorageList = lower.contains('list files') || lower.contains('files in download');
+    final isStorageCreate = (lower.contains('create') || lower.contains('write') || lower.contains('make')) &&
+        (lower.contains('file') || lower.contains('song') || lower.contains('download') || lower.contains('notes.txt'));
+
+    if (isStorageList) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'STORAGE // QUERYING DIRECTORY';
+      notifyListeners();
+
+      final res = await PhoneStorageService.instance.listFiles(folder: 'Download');
+      final files = (res['files'] as List?)?.map((e) => e.toString()).take(5).join(', ') ?? '';
+      final reply = files.isNotEmpty
+          ? 'Files located in your Download directory include: $files, sir.'
+          : 'Your Download directory is currently empty, sir.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'STORAGE INDEXED';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    if (isStorageCreate) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'STORAGE CRUD // EXECUTING DIRECTLY';
+      notifyListeners();
+
+      var fileName = 'note.txt';
+      if (lower.contains('song')) {
+        fileName = 'song.txt';
+      } else if (lower.contains('.txt') || lower.contains('.json') || lower.contains('.md')) {
+        final match = RegExp(r'([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)').firstMatch(trimmed);
+        if (match != null) fileName = match.group(1)!;
+      }
+
+      String content;
+      if (lower.contains('song')) {
+        content = '''Title: Electric Horizons (Stark Edition)
+Verse 1:
+Neon pulses through the titanium frame,
+Silent watchers in the midnight game.
+Through circuits of silver and rivers of light,
+J.A.R.V.I.S. awakens and commands the night.
+
+Chorus:
+Arc reactor burning bright,
+Guiding signals through the flight.
+Beyond the limits of the mortal code,
+Mastering the boundless road.
+''';
+      } else {
+        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+      }
+
+      final res = await PhoneStorageService.instance.createFile(
+        fileName: fileName,
+        content: content,
+        folder: 'Download',
+      );
+
+      final reply = res['success'] == true
+          ? 'I have created the file "$fileName" directly in your Downloads directory and written the contents into it, sir. Executed directly without accessing system settings or file managers.'
+          : 'Storage operation encountered an exception: ${res['message'] ?? 'Permission or I/O failure'}, sir.';
+
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'STORAGE FILE CREATED';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3f. Fast App Installation / Play Store Download ("install instagram", "download whatsapp", "get spotify app")
+    final isInstall = lower.startsWith('install ') ||
+        lower.startsWith('download ') ||
+        (lower.startsWith('get ') && (lower.contains('app') || lower.contains('application')));
+    if (isInstall) {
+      final appName = trimmed
+          .replaceFirst(RegExp(r'^(install|download|get)\s+', caseSensitive: false), '')
+          .replaceAll(RegExp(r'\s+app$', caseSensitive: false), '')
+          .trim();
+      final targetApp = appName.isNotEmpty ? appName : 'app';
+      final ack = PersonalityService.instance.getInstallAck(targetApp);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'INSTALLING: ${targetApp.toUpperCase()}';
+      notifyListeners();
+      await _voice.speak(ack);
+
+      // Open Play Store directly to the app search/details
+      try {
+        final marketUri = Uri.parse('market://search?q=${Uri.encodeComponent(targetApp)}&c=apps');
+        final webUri = Uri.parse('https://play.google.com/store/search?q=${Uri.encodeComponent(targetApp)}&c=apps');
+        final ok = await launchUrl(marketUri, mode: LaunchMode.externalApplication).catchError((_) async {
+          return await launchUrl(webUri, mode: LaunchMode.externalApplication);
+        });
+        if (!ok) {
+          await AppLauncherService.instance.launch('com.android.vending');
+        }
+      } catch (e) {
+        debugPrint('[JarvisService] Play Store direct launch error: $e');
+        await AppLauncherService.instance.launch('com.android.vending');
+      }
+
+      // Hand off to autonomous task executor to tap "Install" on the screen!
+      _phase = JarvisPhase.executing;
+      notifyListeners();
+      final status = await _executor.executeTask('install $targetApp on Play Store');
+      _phase = JarvisPhase.speaking;
+      if (status == TaskStatus.success) {
+        final doneSpeech = 'I have engaged the installation of $targetApp for you. Let me know when you are ready to use it.';
+        _lastJarvisSpeech = doneSpeech;
+        _statusMessage = 'INSTALLATION INITIATED';
+        notifyListeners();
+        await _voice.speak(doneSpeech);
+      } else {
+        final standDownSpeech = 'Play Store is open for $targetApp. Tap Install or let me know if you need assistance.';
+        _lastJarvisSpeech = standDownSpeech;
+        _statusMessage = 'PLAY STORE READY';
+        notifyListeners();
+        await _voice.speak(standDownSpeech);
+      }
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3g. Fast Direct App Opening ("open youtube", "open whatsapp", "open camera", "open settings")
+    if (lower.startsWith('open ') &&
+        !lower.contains('play store and') &&
+        !lower.contains(' and install') &&
+        !lower.contains(' and play') &&
+        !lower.contains(' and send')) {
+      final appQuery = trimmed.replaceFirst(RegExp(r'^open\s+', caseSensitive: false), '').trim();
+      final appName = appQuery.replaceAll(RegExp(r'\s+app$', caseSensitive: false), '').trim();
+      if (appName.isNotEmpty && appName.length < 30) {
+        final launched = await AppLauncherService.instance.launch(appName);
+        if (launched != null) {
+          final ack = PersonalityService.instance.getAppAck(appName);
+          _lastJarvisSpeech = ack;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'LAUNCHING: ${appName.toUpperCase()}';
+          notifyListeners();
+          await _voice.speak(ack);
+          await _startFollowUpListening();
+          return;
+        }
+      }
+    }
+
+    // 4. Fast Play Song / Play Music Action (Google Home / Assistant style)
+    final isPlaySong = lower.startsWith('play ') ||
+        lower == 'play a song' ||
+        lower == 'play song' ||
+        lower == 'play music' ||
+        lower.contains('play a song') ||
+        lower.contains('play song') ||
+        lower.contains('play some music') ||
+        lower.contains('play songs') ||
+        lower.contains('on youtube') ||
+        lower.contains('in youtube') ||
+        (lower.contains('play') && (lower.contains('music') || lower.contains('song')));
+
+    if (isPlaySong) {
+      String songQuery = trimmed;
+      songQuery = songQuery
+          .replaceAll(RegExp(r'\b(on|in)\s+youtube\b', caseSensitive: false), '')
+          .replaceFirst(RegExp(r'^(play\s+the\s+song|play\s+a\s+song|play\s+song|play\s+music|play)\s+', caseSensitive: false), '')
+          .trim();
+
+      final sqLower = songQuery.toLowerCase();
+      if (sqLower.isEmpty ||
+          sqLower == 'a song' ||
+          sqLower == 'song' ||
+          sqLower == 'music' ||
+          sqLower == 'some music' ||
+          sqLower == 'songs' ||
+          sqLower == 'the song' ||
+          sqLower == 'the music') {
+        songQuery = 'popular hit songs';
+      }
+
+      final ack = PersonalityService.instance.getMusicAck(songQuery);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'PLAYING: ${songQuery.toUpperCase()}';
+      notifyListeners();
+
+      // Suppress background speech recognition so it yields audio focus to YouTube/Spotify
+      await _voice.notifyMediaPlaybackStarted(duration: const Duration(seconds: 60));
+
+      await _voice.speak(ack);
+
+      // Attempt 1: Fetch exact top YouTube video ID so it starts playing immediately!
+      final videoId = await _resolveTopYouTubeVideoId(songQuery);
+      if (videoId != null && videoId.isNotEmpty) {
+        final videoUri = Uri.parse('https://www.youtube.com/watch?v=$videoId');
+        try {
+          await launchUrl(videoUri, mode: LaunchMode.externalApplication);
+        } catch (_) {
+          await launchUrl(videoUri);
+        }
+      } else {
+        // Attempt 2 Fallback: Open search and auto-click the first video result
+        final uri = Uri.parse(
+          'https://www.youtube.com/results?search_query=${Uri.encodeComponent(songQuery)}',
+        );
+        try {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          debugPrint('[JarvisService] Play song launch error: $e');
+          await AppLauncherService.instance.launch('com.google.android.youtube');
+        }
+        await Future.delayed(const Duration(milliseconds: 1400));
+        try {
+          final nodes = await _automation.dumpScreen();
+          for (final n in nodes) {
+            if (n.isClickable && n.centerY > 350 && n.centerY < 1500) {
+              await _automation.clickNode(n);
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+      await _voice.notifyMediaPlaybackStarted(duration: const Duration(seconds: 60));
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    // 4b. High-Priority Knowledge, Concept & Educational Question Filter (No accidental workflow collision)
+    final isKnowledgeQuestion = RegExp(
+      r'^(what\s+is|what\s+are|what\x27s|who\s+is|who\s+was|who\s+were|why\s+is|why\s+do|why\s+does|why\s+are|how\s+does|how\s+do|how\s+can|how\s+to|explain|tell\s+me\s+about|describe|define|can\s+you\s+explain|what\s+do\s+you\s+know\s+about)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmed) &&
+    !lower.contains('what time') &&
+    !lower.contains('what day') &&
+    !lower.contains('what date') &&
+    !lower.contains('what song') &&
+    !lower.contains('what is on my screen') &&
+    !lower.contains('what is this') &&
+    !lower.contains('what do you see') &&
+    !lower.contains('battery');
+
+    if (isKnowledgeQuestion) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'PROCESSING INQUIRY // NEURAL CORE';
+      notifyListeners();
+
+      final topic = trimmed
+          .replaceAll(
+            RegExp(
+              r'^(what\s+is|what\s+are|what\x27s|who\s+is|who\s+was|who\s+were|why\s+is|why\s+do|why\s+does|why\s+are|how\s+does|how\s+do|how\s+can|how\s+to|explain|tell\s+me\s+about|describe|define|can\s+you\s+explain|what\s+do\s+you\s+know\s+about)\s+',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .replaceAll(RegExp(r'[?.,!]+$'), '')
+          .trim();
+
+      // 1. Instantly speak a warm, personalized acknowledgment
+      final ack = PersonalityService.instance.getQuestionAck(trimmed);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and fetch multi-source web/encyclopedic records
+      final speakAckFuture = _voice.speak(ack);
+      final searchFuture = JarvisToolsService.instance.searchWeb(topic.isNotEmpty ? topic : trimmed);
+      final searchResult = await searchFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING EXPLANATION';
+      notifyListeners();
+
+      final answerFuture = searchResult.trim().isNotEmpty
+          ? _ai.answerWithToolResult(
+              userQuestion: trimmed,
+              toolResult: searchResult,
+              history: _dialogHistory,
+            )
+          : _ai.chat(
+              message: trimmed,
+              history: _dialogHistory,
+            );
+
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'EXPLANATION COMPLETE';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      // Record in conversational history and memory
+      _dialogHistory.add({'role': 'user', 'content': trimmed});
+      _dialogHistory.add({'role': 'assistant', 'content': answer});
+      if (_dialogHistory.length > 10) _dialogHistory.removeRange(0, 2);
+      unawaited(ConversationalMemoryService.instance.recordTurn(trimmed, answer));
+
+      // Immediate hands-free follow-up continuous listening
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 5. Fast Self-Evolving Workflow Engine match (Hermes Agent Pattern)
+    if (SettingsService.instance.jarvisWorkflowsEnabled) {
+      final matchedWf = WorkflowService.instance.findMatch(trimmed);
+      if (matchedWf != null) {
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // ENGAGING ${matchedWf.name.toUpperCase()}';
+        notifyListeners();
+
+        // 1. Execute hardware changes (volume, brightness, torch)
+        await WorkflowService.instance.executeWorkflow(matchedWf);
+
+        // 2. Deliver completion with caring follow-up
+        _phase = JarvisPhase.speaking;
+        _lastJarvisSpeech = matchedWf.spokenConfirmation;
+        _statusMessage = '${matchedWf.name.toUpperCase()} ACTIVE';
+        notifyListeners();
+        await _voice.speak(matchedWf.spokenConfirmation);
+        await _startFollowUpListening();
+        return;
+      }
+    }
+
+    // 5. Fast system diagnostic check
+    if (lower == 'status' ||
+        lower == 'system status' ||
+        lower == 'diagnostics' ||
+        lower == 'systems check') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // RUNNING DIAGNOSTICS';
+      notifyListeners();
+
+      final summary = await JarvisToolsService.instance.getSystemDiagnostics();
+      final delivery = '$summary How else may I assist you today, sir?';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SYSTEMS NOMINAL';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 6. Fast Battery Check
+    if (lower == 'battery' ||
+        lower == 'battery level' ||
+        lower == 'battery percentage' ||
+        lower.contains('how much battery') ||
+        lower.contains('battery status')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // BATTERY DIAGNOSTICS';
+      notifyListeners();
+
+      final battery = await JarvisToolsService.instance.getBatteryStatus();
+      final level = battery['level'] as int;
+      final isCharging = battery['isCharging'] as bool;
+      final reply = level >= 0
+          ? 'Your battery is currently at $level%, ${isCharging ? 'and charging' : 'discharging normally'}, sir. We have ample power for your tasks. Do you need anything else, sir?'
+          : 'Battery telemetry is currently unavailable, sir. Is there anything else I can check for you?';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 7. Fast Torch / Flashlight Check
+    if (lower.contains('flashlight on') ||
+        lower.contains('torch on') ||
+        lower.contains('turn on flashlight') ||
+        lower.contains('turn on the torch')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // ACTIVATING TORCH';
+      notifyListeners();
+
+      await JarvisToolsService.instance.setTorch(true);
+      const delivery = 'Flashlight is on, sir. Let me know when you would like it switched off.';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TORCH ACTIVE';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+    if (lower.contains('flashlight off') ||
+        lower.contains('torch off') ||
+        lower.contains('turn off flashlight') ||
+        lower.contains('turn off the torch')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // DEACTIVATING TORCH';
+      notifyListeners();
+
+      await JarvisToolsService.instance.setTorch(false);
+      const delivery = 'Flashlight is deactivated, sir. Anything else I can do for you?';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TORCH OFFLINE';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 8. Fast Date / Time Check
+    if (lower.contains('what time is it') ||
+        lower == 'time' ||
+        lower == 'current time' ||
+        lower.contains('what is the date') ||
+        lower == 'date' ||
+        lower.contains('what day is it')) {
+      final dt = JarvisToolsService.instance.getCurrentDateTime();
+      final reply = 'It is currently $dt, sir. How else may I assist you today?';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TEMPORAL DIAGNOSTICS';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 9. Fast Direct System Control Filters
+    if (lower.contains('volume up') ||
+        lower.contains('louder') ||
+        lower.contains('increase volume')) {
+      await _handleSystemCommand('volume_up', PersonalityService.instance.getSystemAck('volume_up'));
+      return;
+    }
+    if (lower.contains('volume down') ||
+        lower.contains('quieter') ||
+        lower.contains('lower volume')) {
+      await _handleSystemCommand('volume_down', PersonalityService.instance.getSystemAck('volume_down'));
+      return;
+    }
+    if (lower == 'mute' || lower == 'silence' || lower.contains('mute sound')) {
+      await _handleSystemCommand('mute', PersonalityService.instance.getSystemAck('mute'));
+      return;
+    }
+    if (lower == 'unmute' || lower.contains('unmute sound')) {
+      await _handleSystemCommand('unmute', PersonalityService.instance.getSystemAck('unmute'));
+      return;
+    }
+    if (lower.contains('screenshot') ||
+        lower.contains('screen shot') ||
+        lower.contains('capture screen')) {
+      await _handleSystemCommand('screenshot', PersonalityService.instance.getSystemAck('screenshot'));
+      return;
+    }
+    if (lower == 'home' || lower == 'go home' || lower == 'home screen') {
+      await _handleSystemCommand('home', PersonalityService.instance.getSystemAck('home'));
+      return;
+    }
+    if (lower == 'back' || lower == 'go back') {
+      await _handleSystemCommand('back', PersonalityService.instance.getSystemAck('back'));
+      return;
+    }
+
+    // 10. Fast Contact Call Filter
+    if (lower.startsWith('call ') && !lower.contains('screen')) {
+      final name = trimmed.substring(5).trim();
+      if (name.isNotEmpty) {
+        final ack = 'Locating coordinates to call $name for you, sir. One moment.';
+        _phase = JarvisPhase.speaking;
+        _lastJarvisSpeech = ack;
+        _statusMessage = 'CONTACT DIALER // $name'.toUpperCase();
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final reply = await JarvisToolsService.instance.callContact(name);
+        _lastJarvisSpeech = reply;
+        notifyListeners();
+        await _voice.speak(reply);
+        if (_shouldListenContinuously) _standDown();
+        return;
+      }
+    }
+
+    // 11. Fast Live Breaking News Filter
+    final isNews = lower.contains('news') ||
+        lower.contains('headline') ||
+        lower.contains('what happened today') ||
+        lower.contains('breaking news') ||
+        lower.contains('give me news') ||
+        lower.contains('current news') ||
+        lower.contains('what is the news') ||
+        lower.contains('what is happening in the world') ||
+        lower.contains('latest news');
+
+    if (isNews) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'GATHERING NEWS HEADLINES';
+      notifyListeners();
+
+      // Extract topic if specified
+      String? topic;
+      for (final kw in [
+        'tech',
+        'technology',
+        'sports',
+        'cricket',
+        'football',
+        'business',
+        'crypto',
+        'world',
+        'science',
+        'politics',
+        'ai',
+        'space',
+      ]) {
+        if (lower.contains(kw)) {
+          topic = kw;
+          break;
+        }
+      }
+
+      // 1. Instantly speak a warm, personalized, non-repetitive British acknowledgment!
+      final ack = PersonalityService.instance.getNewsAck(topic);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and fetch live multi-feed news in background
+      final speakAckFuture = _voice.speak(ack);
+      final newsDataFuture = JarvisToolsService.instance.getLiveNews(topic);
+
+      final newsData = await newsDataFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING INTELLIGENCE BRIEFING';
+      notifyListeners();
+
+      final answerFuture = _ai.answerWithToolResult(
+        userQuestion: trimmed,
+        toolResult: newsData,
+        history: _dialogHistory,
+      );
+
+      // Ensure initial acknowledgment finishes speaking before delivering final briefing
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      // 2. Spoken reply to question
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'NEWS TELEMETRY BROADCAST';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 11b. Fast Live Web Search & Real-Time Information Filter
+    final isWebSearch = lower.startsWith('search ') ||
+        lower.startsWith('search for ') ||
+        lower.startsWith('look up ') ||
+        lower.startsWith('google ') ||
+        lower.startsWith('find out ') ||
+        lower.startsWith('tell me about ') ||
+        lower.startsWith('check online ') ||
+        lower.startsWith('who is ') ||
+        lower.startsWith('what is ') ||
+        lower.startsWith('where is ') ||
+        lower.startsWith('how much is ') ||
+        lower.contains('search the web') ||
+        lower.contains('search online');
+
+    if (isWebSearch) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'INITIALIZING WEB INTELLIGENCE';
+      notifyListeners();
+
+      final query = trimmed
+          .replaceAll(
+            RegExp(
+              r'^(search\s+for|search\s+the\s+web\s+for|search\s+online\s+for|search|look\s+up|google|find\s+out|tell\s+me\s+about|check\s+online\s+for)\s+',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .trim();
+
+      // 1. Instantly speak dynamic, personalized acknowledgment
+      final ack = PersonalityService.instance.getWebSearchAck(query);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and execute multi-source search in background
+      final speakAckFuture = _voice.speak(ack);
+      final searchFuture = JarvisToolsService.instance.searchWeb(query.isNotEmpty ? query : trimmed);
+
+      final searchResult = await searchFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING WEB INTELLIGENCE';
+      notifyListeners();
+
+      final answerFuture = _ai.answerWithToolResult(
+        userQuestion: trimmed,
+        toolResult: searchResult,
+        history: _dialogHistory,
+      );
+
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'WEB INTELLIGENCE RETRIEVED';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 12. Full AI Intent Interpretation via AiService
+    JarvisIntent intent;
+    try {
+      intent = await _ai.interpretJarvisCommand(
+        speech: trimmed,
+        history: _dialogHistory,
+      );
+    } catch (_) {
+      intent = JarvisIntent.fallback(trimmed);
+    }
+
+    // Save short-term dialog context
+    _dialogHistory.add({'role': 'user', 'content': trimmed});
+    _dialogHistory.add({'role': 'assistant', 'content': intent.spoken});
+    if (_dialogHistory.length > 10) {
+      _dialogHistory.removeRange(0, 2);
+    }
+
+    switch (intent.type) {
+      case JarvisIntentType.news:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'GATHERING NEWS HEADLINES';
+        notifyListeners();
+
+        final ack = PersonalityService.instance.getNewsAck(intent.toolArg);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final newsFuture = JarvisToolsService.instance.getLiveNews(intent.toolArg);
+        final newsData = await newsFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING INTELLIGENCE BRIEFING';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: newsData,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'NEWS TELEMETRY BROADCAST';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.workflow:
+        final rawArg = (intent.toolArg ?? trimmed).toLowerCase();
+        // Check for Sentry Protocol / Sentry Mode within workflow intent
+        if (rawArg.contains('sentry') || rawArg.contains('watchdog')) {
+          final isDisarm = rawArg.contains('disarm') ||
+              rawArg.contains('deactivat') ||
+              rawArg.contains('stop') ||
+              rawArg.contains('cancel') ||
+              rawArg.contains('stand down');
+          if (isDisarm) {
+            _statusMessage = 'SENTRY PROTOCOL // DISARMING';
+            notifyListeners();
+            await SentryService.instance.disarmSentry();
+          } else {
+            _statusMessage = 'SENTRY PROTOCOL // ARMING WATCHDOG';
+            notifyListeners();
+            await SentryService.instance.armSentry();
+          }
+          break;
+        }
+
+        final ack = intent.spoken.isNotEmpty
+            ? intent.spoken
+            : 'Right away, sir. Calibrating your settings environment now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'CALIBRATING WORKFLOW PROTOCOL';
+        notifyListeners();
+
+        // 1. Speak courteous acknowledgment completely
+        await _voice.speak(ack);
+
+        // 2. Execute workflow
+        _phase = JarvisPhase.executing;
+        notifyListeners();
+
+        final match = WorkflowService.instance.findMatch(intent.toolArg ?? trimmed) ??
+            WorkflowService.instance.findMatch(trimmed);
+
+        if (match != null) {
+          await WorkflowService.instance.executeWorkflow(match);
+          _lastJarvisSpeech = match.spokenConfirmation;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = '${match.name.toUpperCase()} ACTIVE';
+          notifyListeners();
+          await _voice.speak(match.spokenConfirmation);
+        } else {
+          const fallback = 'All settings have been calibrated for you, sir. Let me know if you need anything else.';
+          _lastJarvisSpeech = fallback;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'PROTOCOL ACTIVE';
+          notifyListeners();
+          await _voice.speak(fallback);
+        }
+        break;
+
+      case JarvisIntentType.webSearch:
+        final query = intent.toolArg ?? trimmed;
+        final ack = PersonalityService.instance.getWebSearchAck(query);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'SEARCHING LIVE WEB RECORDS';
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final searchFuture = JarvisToolsService.instance.searchWeb(query);
+        final searchResult = await searchFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING WEB INTELLIGENCE';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: searchResult,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'WEB INTELLIGENCE RETRIEVED';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.weather:
+        final loc = intent.toolArg ?? '';
+        final ack = PersonalityService.instance.getWeatherAck(loc);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'METEOROLOGICAL TELEMETRY';
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final weatherFuture = JarvisToolsService.instance.getWeather(loc);
+        final weatherResult = await weatherFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING WEATHER REPORT';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: weatherResult,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'METEOROLOGICAL REPORT COMPLETE';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.battery:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // BATTERY DIAGNOSTICS';
+        notifyListeners();
+
+        final battery =
+            await JarvisToolsService.instance.getBatteryStatus();
+        final level = battery['level'] as int;
+        final isCharging = battery['isCharging'] as bool;
+        final battReply = level >= 0
+            ? 'Your battery is currently at $level%, ${isCharging ? 'and charging' : 'discharging normally'}, sir. We have plenty of power. Do you need anything else, sir?'
+            : 'Battery level telemetry is currently unavailable, sir. Is there anything else I can check?';
+
+        _lastJarvisSpeech = battReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(battReply);
+        break;
+
+      case JarvisIntentType.datetime:
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'TEMPORAL DIAGNOSTICS';
+        notifyListeners();
+
+        final dt = JarvisToolsService.instance.getCurrentDateTime();
+        final reply = 'It is currently $dt, sir. How else may I be of service today?';
+        _lastJarvisSpeech = reply;
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.torch:
+        final on = intent.toolArg == 'on';
+        _phase = JarvisPhase.thinking;
+        _statusMessage = on ? 'COMPUTING // ACTIVATING TORCH' : 'COMPUTING // DEACTIVATING TORCH';
+        notifyListeners();
+
+        await JarvisToolsService.instance.setTorch(on);
+        final reply = on
+            ? 'Flashlight is on, sir. Let me know when you would like it switched off.'
+            : 'Flashlight is deactivated, sir. Anything else I can do for you?';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = on ? 'TORCH ACTIVE' : 'TORCH OFFLINE';
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.routine:
+        final isMorning = (intent.toolArg ?? '').toLowerCase() == 'morning' ||
+            trimmed.toLowerCase().contains('morning');
+        _phase = JarvisPhase.thinking;
+        _statusMessage = isMorning ? 'COMPUTING // MORNING BRIEFING' : 'COMPUTING // NIGHT PROTOCOL';
+        notifyListeners();
+
+        final briefing = isMorning
+            ? await RoutineAutomationService.instance.executeMorningRoutine()
+            : await RoutineAutomationService.instance.executeEveningRoutine();
+
+        _lastJarvisSpeech = briefing;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(briefing);
+        break;
+
+      case JarvisIntentType.finance:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // FINANCIAL TELEMETRY';
+        notifyListeners();
+
+        final quote = await FinanceTrackingService.instance.getQuoteForQuery(trimmed);
+        _lastJarvisSpeech = quote;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(quote);
+        break;
+
+      case JarvisIntentType.sports:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // SPORTS FIXTURES';
+        notifyListeners();
+
+        final update = await SportsService.instance.getSportsUpdate(trimmed);
+        _lastJarvisSpeech = update;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(update);
+        break;
+
+      case JarvisIntentType.todo:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('add ') || lower.contains('add task') || lower.contains('add to')) {
+          var taskText = trimmed
+              .replaceFirst(RegExp(r'^(add\s+to\s+(my\s+)?(todo|to-do)(\s+list)?|add\s+task|add)\s+', caseSensitive: false), '')
+              .trim();
+          if (taskText.isEmpty) taskText = 'Review task';
+          await TodoService.instance.addTask(taskText);
+          final reply = 'I have added "$taskText" to your to-do agenda, sir. Anything else?';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'TODO ITEM RECORDED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = TodoService.instance.getPendingTasksSpoken();
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'TASK AGENDA';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.notes:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('take a note') || lower.startsWith('note down') || lower.startsWith('write a note')) {
+          var noteContent = trimmed
+              .replaceFirst(RegExp(r'^(take\s+a\s+note(\s+that)?|note\s+down|write\s+a\s+note(\s+that)?)\s*[:\s]*', caseSensitive: false), '')
+              .trim();
+          if (noteContent.isEmpty) noteContent = 'Personal Note';
+          await NotesKnowledgeService.instance.addNote(
+            title: 'Voice Note ${DateTime.now().month}/${DateTime.now().day}',
+            content: noteContent,
+          );
+          final reply = 'Note saved in your personal knowledge base, sir: "$noteContent".';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'KNOWLEDGE RECORD SAVED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = NotesKnowledgeService.instance.searchNotesSpoken(trimmed);
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'KNOWLEDGE RETRIEVAL';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.calendar:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('remind me to ') || lower.startsWith('set a reminder for ')) {
+          final reminderText = trimmed
+              .replaceFirst(RegExp(r'^(remind\s+me\s+to|set\s+a\s+reminder\s+for)\s+', caseSensitive: false), '')
+              .trim();
+          await CalendarReminderService.instance.addItem(
+            title: reminderText,
+            dateTime: DateTime.now().add(const Duration(hours: 1)),
+            isReminder: true,
+          );
+          final reply = 'I have set a reminder for "$reminderText", sir.';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'REMINDER SCHEDULED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = CalendarReminderService.instance.getTodayBriefingSpoken();
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'CALENDAR SCHEDULE';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.email:
+        final lowerEmail = trimmed.toLowerCase();
+        final isInboxCheck = lowerEmail.contains('read') ||
+            lowerEmail.contains('check') ||
+            lowerEmail.contains('inbox') ||
+            lowerEmail.contains('what are') ||
+            lowerEmail.contains('new') ||
+            lowerEmail.contains('recent');
+
+        String emailReply;
+        if (isInboxCheck) {
+          emailReply = await InboxService.instance.getEmailSummary();
+        } else {
+          final triage = await EmailTriageService.instance.triageEmail(trimmed);
+          emailReply = '${triage.summary} Priority is flagged as ${triage.priority.name}. Would you like me to open a draft reply for you, sir?';
+        }
+
+        _lastJarvisSpeech = emailReply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'EMAIL INBOX PROCESSED';
+        notifyListeners();
+        await _voice.speak(emailReply);
+        break;
+
+      case JarvisIntentType.message:
+        final lowerMsg = trimmed.toLowerCase();
+        final isSmsCheck = lowerMsg.contains('read') ||
+            lowerMsg.contains('check') ||
+            lowerMsg.contains('inbox') ||
+            lowerMsg.contains('what are') ||
+            lowerMsg.contains('recent message') ||
+            lowerMsg.contains('new message') ||
+            lowerMsg.contains('read my sms');
+
+        if (isSmsCheck) {
+          final smsReply = await InboxService.instance.getSmsSummary();
+          _lastJarvisSpeech = smsReply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'SMS INBOX PROCESSED';
+          notifyListeners();
+          await _voice.speak(smsReply);
+        } else {
+          final draftText = await MessageDraftingService.instance.draftMessageContent(prompt: trimmed);
+          final reply = 'I have prepared this message draft for you, sir: "$draftText". Would you like me to dispatch it?';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'MESSAGE DRAFT PREPARED';
+          notifyListeners();
+          await _voice.speak(reply);
+          await MessageDraftingService.instance.dispatchDraft(
+            MessageDraft(
+              channel: trimmed.toLowerCase().contains('whatsapp') ? MessageChannel.whatsapp : MessageChannel.sms,
+              recipient: '',
+              body: draftText,
+            ),
+          );
+        }
+        break;
+
+      case JarvisIntentType.vision:
+        final isScreen = trimmed.toLowerCase().contains('screen');
+        final ack = isScreen
+            ? 'Scanning active screen elements, sir.'
+            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OPTICAL SENSORS ACTIVE';
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final analysis = isScreen
+            ? await ProactiveAgentService.instance.analyzeCurrentScreen(userQuestion: trimmed)
+            : (await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed)).spokenSummary;
+
+        _lastJarvisSpeech = analysis;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
+        notifyListeners();
+        await _voice.speak(analysis);
+        break;
+
+      case JarvisIntentType.smartHome:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SMART HOME IOT // DISPATCHING';
+        notifyListeners();
+
+        final reply = await SmartHomeService.instance.handleVoiceCommand(trimmed);
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'SMART HOME ACTIVE';
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.commute:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // COMMUTE & TRAFFIC TELEMETRY';
+        notifyListeners();
+
+        final commute = await CommuteTrafficService.instance.checkCommute(destination: intent.toolArg);
+        _lastJarvisSpeech = commute.spokenSummary;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'COMMUTE REPORT';
+        notifyListeners();
+        await _voice.speak(commute.spokenSummary);
+        break;
+
+      case JarvisIntentType.macro:
+        final lowerMacro = trimmed.toLowerCase();
+        if (lowerMacro.startsWith('stop recording') || lowerMacro.startsWith('save macro')) {
+          final skill = await MacroRecorderService.instance.stopRecording();
+          final reply = skill != null
+              ? 'Macro "${skill.goal}" saved and codified into AGENT.md, sir.'
+              : 'Macro recording concluded, sir.';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          notifyListeners();
+          await _voice.speak(reply);
+        } else if (lowerMacro.startsWith('run macro') || lowerMacro.startsWith('replay macro')) {
+          final macroName = trimmed.replaceFirst(RegExp(r'^(run|replay)\s+macro\s+', caseSensitive: false), '').trim();
+          final match = await SkillMemoryService.instance.findMatch(macroName);
+          if (match != null) {
+            final reply = 'Replaying macro "${match.goal}", sir.';
+            _lastJarvisSpeech = reply;
+            _phase = JarvisPhase.speaking;
+            notifyListeners();
+            await _voice.speak(reply);
+            await MacroRecorderService.instance.replaySkill(match);
+          } else {
+            final reply = 'No matching macro found for "$macroName", sir.';
+            _lastJarvisSpeech = reply;
+            _phase = JarvisPhase.speaking;
+            notifyListeners();
+            await _voice.speak(reply);
+          }
+        } else {
+          final goal = intent.toolArg ?? 'Custom Task';
+          await MacroRecorderService.instance.startRecording(goal);
+          final reply = 'Macro recording started for "$goal", sir. Perform your actions, then say "save macro".';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.airGestures:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'AIR GESTURES SENSORY MATRIX';
+        notifyListeners();
+        final raw = (intent.toolArg ?? trimmed).toLowerCase();
+        final isOff = raw.contains('off') ||
+            raw.contains('disable') ||
+            raw.contains('deactivat') ||
+            raw.contains('stop');
+        String gestureReply;
+        if (isOff) {
+          await AirGestureService.instance.stop();
+          gestureReply = 'Iron Man zero-touch air gesture sensors disengaged, sir.';
+        } else {
+          await AirGestureService.instance.start();
+          gestureReply =
+              'Zero-touch air gestures engaged, sir. Wave over the screen to skip tracks, hover palm to pause, or double wave for instant screenshot.';
+        }
+        _lastJarvisSpeech = gestureReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(gestureReply);
+        break;
+
+      case JarvisIntentType.chargingTelemetry:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'ARC REACTOR CHARGING TELEMETRY';
+        notifyListeners();
+        ChargingTelemetryService.instance.showCinematicHud.value = true;
+        final chargingReport = await ChargingTelemetryService.instance.getSpokenTelemetry();
+        _lastJarvisSpeech = chargingReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(chargingReport);
+        break;
+
+      case JarvisIntentType.polyglotDiplomat:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATION';
+        notifyListeners();
+        _showModalSafely(const PolyglotDiplomatDialog());
+        const transAck =
+            'Polyglot Diplomat initialized, sir. Ready for real-time diplomatic translation.';
+        _lastJarvisSpeech = transAck;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(transAck);
+        break;
+
+      case JarvisIntentType.codeBlack:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CODE BLACK // HARDWARE LOCKOUT';
+        notifyListeners();
+        await CodeBlackService.instance.arm();
+        _phase = JarvisPhase.idle;
+        notifyListeners();
+        break;
+
+      case JarvisIntentType.floatingCopilot:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'HOLOGRAPHIC FLOATING CO-PILOT';
+        notifyListeners();
+        final rawCopilot = (intent.toolArg ?? trimmed).toLowerCase();
+        final isHide = rawCopilot.contains('hide') ||
+            rawCopilot.contains('close') ||
+            rawCopilot.contains('stop') ||
+            rawCopilot.contains('dismiss');
+        String copilotReply;
+        if (isHide) {
+          await FloatingCopilotService.instance.hideOverlay();
+          copilotReply = 'Floating co-pilot dismissed, sir.';
+        } else {
+          await FloatingCopilotService.instance.activateOverlay();
+          copilotReply =
+              'Holographic floating co-pilot active, sir. Hovering over active applications with live screen context triage.';
+        }
+        _lastJarvisSpeech = copilotReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(copilotReply);
+        break;
+
+      case JarvisIntentType.airspaceRadar:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'AIRSPACE & SATELLITE RADAR';
+        notifyListeners();
+        _showModalSafely(const AirspaceRadarDialog());
+        final radarReport = await AirspaceRadarService.instance.getSpokenAirspaceReport();
+        _lastJarvisSpeech = radarReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(radarReport);
+        break;
+
+      case JarvisIntentType.multiTaskDump:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'MULTI-TASK DECOUPLER';
+        notifyListeners();
+        final decoupledReport = await MultiTaskDecouplerService.instance.processBrainDump(trimmed);
+        _lastJarvisSpeech = decoupledReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(decoupledReport);
+        break;
+
+      case JarvisIntentType.opticalSolver:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'REAL-TIME OPTICAL HUD SOLVER';
+        notifyListeners();
+        _showModalSafely(const OpticalSolverDialog());
+        final solveResult =
+            await OpticalSolverService.instance.pointAndSolve(customQuery: trimmed);
+        _lastJarvisSpeech = solveResult.spokenSummary;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(solveResult.spokenSummary);
+        break;
+
+      case JarvisIntentType.networkAudit:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'NETWORK SECURITY AUDIT';
+        notifyListeners();
+        _showModalSafely(const NetworkAuditDialog());
+        final netReport = await NetworkAuditService.instance.getSpokenAuditReport();
+        _lastJarvisSpeech = netReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(netReport);
+        break;
+
+      case JarvisIntentType.multistep:
+        final ack = 'Initiating multi-step execution protocol for you, sir.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'MULTI-STEP PROTOCOL';
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final steps = await ProactiveAgentService.instance.planMultiStepGoal(trimmed);
+        final planSpoken = 'I have broken down this goal into ${steps.length} sequential steps, sir: ${steps.join("; ")}. Commencing first step now.';
+        _lastJarvisSpeech = planSpoken;
+        notifyListeners();
+        await _voice.speak(planSpoken);
+        break;
+
+      case JarvisIntentType.system:
+        await _handleSystemCommand(intent.systemCommand ?? '', intent.spoken);
+        break;
+
+      case JarvisIntentType.action:
+        final goal = intent.actionGoal ?? trimmed;
+
+        // Foundation: Permission system check before risky actions
+        if (SettingsService.instance.confirmRiskyActions) {
+          final assessment = SecurityAlertService.instance.evaluateActionRisk(goal);
+          if (assessment.requiresConfirmation) {
+            final confirmPrompt = 'Sir, this action involves high-risk operations: ${assessment.reason}. Do you confirm execution?';
+            _lastJarvisSpeech = confirmPrompt;
+            _phase = JarvisPhase.speaking;
+            _statusMessage = 'CONFIRMATION REQUIRED // HIGH RISK';
+            notifyListeners();
+            await _voice.speak(confirmPrompt);
+            await SecurityAlertService.instance.dispatchSecurityAlert('High-risk operation prompted: $goal');
+            return;
+          }
+        }
+
+        _currentTaskGoal = goal;
+        final ack = intent.spoken.isNotEmpty
+            ? intent.spoken
+            : 'Right away, sir. I will take care of that on your device right now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'PROTOCOL ENGAGED // $goal'.toUpperCase();
+        notifyListeners();
+
+        // 1. Speak acknowledgment completely
+        await _voice.speak(ack);
+
+        // 2. Execute automation task on device
+        _phase = JarvisPhase.executing;
+        notifyListeners();
+        final status = await _executor.executeTask(goal);
+
+        // 3. Deliver completion with caring follow-up
+        _phase = JarvisPhase.speaking;
+        if (status == TaskStatus.success) {
+          const successSpeech = 'I have completed that task for you, sir. Is there anything else you need?';
+          _lastJarvisSpeech = successSpeech;
+          _statusMessage = 'PROTOCOL FINISHED // SUCCESS';
+          notifyListeners();
+          await _voice.speak(successSpeech);
+        } else if (status == TaskStatus.cancelled) {
+          const cancelledSpeech = 'The task was cancelled, sir. What would you like me to do instead?';
+          _lastJarvisSpeech = cancelledSpeech;
+          _statusMessage = 'PROTOCOL CANCELLED';
+          notifyListeners();
+          await _voice.speak(cancelledSpeech);
+        } else {
+          const failedSpeech =
+              'I encountered an obstruction with that task on the screen, sir. Would you like me to try again?';
+          _lastJarvisSpeech = failedSpeech;
+          _statusMessage = 'PROTOCOL FAILED';
+          notifyListeners();
+          await _voice.speak(failedSpeech);
+        }
+        break;
+
+      case JarvisIntentType.chat:
+        String chatAnswer = intent.spoken;
+        if (chatAnswer.trim().isEmpty ||
+            chatAnswer.length < 25 ||
+            chatAnswer.toLowerCase().contains('at your service') ||
+            chatAnswer.toLowerCase().contains('what would you like me to do')) {
+          _phase = JarvisPhase.thinking;
+          _statusMessage = 'PROCESSING // NEURAL CORE';
+          notifyListeners();
+          chatAnswer = await _ai.chat(message: trimmed, history: _dialogHistory);
+        }
+        _lastJarvisSpeech = chatAnswer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'VOCAL RESPONSE COMPLETE';
+        notifyListeners();
+        await _voice.speak(chatAnswer);
+        break;
+    }
+
+    // Persist conversation turn and auto-extract user preferences/facts across sessions
+    unawaited(ConversationalMemoryService.instance.recordTurn(trimmed, _lastJarvisSpeech));
+
+    // Follow-up hands-free continuous listening
+    await _startFollowUpListening();
+  }
+
+  Future<void> _handleSystemCommand(String cmd, String spoken) async {
+    final speech = spoken.isNotEmpty ? spoken : PersonalityService.instance.getGeneralAck();
+    _lastJarvisSpeech = speech;
+    _phase = JarvisPhase.speaking;
+    _statusMessage = 'SYSTEM OVERRIDE // $cmd'.toUpperCase();
+    notifyListeners();
+
+    await _voice.speak(speech);
+
+    switch (cmd) {
+      case 'volume_up':
+        await _system.volumeUp();
+        break;
+      case 'volume_down':
+        await _system.volumeDown();
+        break;
+      case 'mute':
+        await _system.setMuted(true);
+        break;
+      case 'unmute':
+        await _system.setMuted(false);
+        break;
+      case 'brightness_up':
+        final current = await _system.getBrightness() ?? 0.5;
+        await _system.setBrightness((current + 0.2).clamp(0.0, 1.0));
+        break;
+      case 'brightness_down':
+        final current = await _system.getBrightness() ?? 0.5;
+        await _system.setBrightness((current - 0.2).clamp(0.0, 1.0));
+        break;
+      case 'screenshot':
+        await _automation.takeScreenshotBase64();
+        break;
+      case 'home':
+        await _automation.pressHome();
+        break;
+      case 'back':
+        await _automation.pressBack();
+        break;
+    }
+
+    if (_shouldListenContinuously) {
+      _standDown();
+    }
+  }
+
+  /// Resolves the exact top YouTube video ID for instant playback without search friction.
+  Future<String?> _resolveTopYouTubeVideoId(String query) async {
+    try {
+      final url = Uri.parse(
+        'https://www.youtube.com/results?search_query=${Uri.encodeComponent(query)}',
+      );
+      final resp = await http.get(url, headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      }).timeout(const Duration(seconds: 4));
+      if (resp.statusCode == 200) {
+        final match =
+            RegExp(r'watch\?v=([a-zA-Z0-9_-]{11})').firstMatch(resp.body);
+        if (match != null) {
+          return match.group(1);
+        }
+      }
+    } catch (e) {
+      debugPrint('[JarvisService] YouTube top video lookup error: $e');
+    }
+    return null;
+  }
+}
+,
+      r'\b(no|nope|nah|not\s+now|never\s+mind|nevermind|don\x27t|cancel|later|dismiss|leave\s+it|negative|stop|skip)\b',
+    ];
+    for (final pattern in patterns) {
+      if (RegExp(pattern, caseSensitive: false).hasMatch(lower)) return true;
+    }
+    return false;
+  }
+
+  /// Toggles speech recognition manually via the UI.
+  Future<void> toggleListening() async {
+    if (_phase == JarvisPhase.listening) {
+      await stopListening();
+      if (_shouldListenContinuously) {
+        _standDown();
+        await startListening();
+      }
+    } else {
+      _wakeUp();
+      await startListening(manual: true);
+    }
+  }
+
+  /// Begins recording voice input.
+  Future<bool> startListening({bool manual = false}) async {
+    await _voice.stopSpeaking();
+
+    if (manual) {
+      _wakeUp();
+    }
+
+    // Google Home / Google Assistant Architecture:
+    // Only set phase to listening if awake or manual tap.
+    // In passive standby background waiting for wake-word, stay in idle so UI is calm and does NOT flicker!
+    if (_isAwake || !_shouldListenContinuously) {
+      _phase = JarvisPhase.listening;
+      _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+    } else {
+      _phase = JarvisPhase.idle;
+      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+    }
+    notifyListeners();
+
+    final started = await _voice.startListening(
+      continuous: _shouldListenContinuously,
+      manual: manual,
+      onResult: (words, isFinal, candidates) {
+        _lastUserSpeech = words;
+        debugPrint('[JarvisService] Heard: "$words" (candidates: $candidates, isFinal: $isFinal, isAwake: $_isAwake)');
+
+        // Immediate wake detection on partial speech stream
+        if (_shouldListenContinuously && !_isAwake) {
+          String? wakeCmd = _extractWakeCommand(words);
+          if (wakeCmd == null) {
+            for (final cand in candidates) {
+              final cCmd = _extractWakeCommand(cand);
+              if (cCmd != null) {
+                wakeCmd = cCmd;
+                break;
+              }
+            }
+          }
+          if (wakeCmd != null) {
+            _wakeUp();
+            onWakeWordTriggered?.call();
+            HapticFeedback.mediumImpact();
+
+            // Set visual listening state immediately, but NEVER cut off the user!
+            // Let the user finish speaking their full command until silence / isFinal.
+            _phase = JarvisPhase.listening;
+            _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+            notifyListeners();
+          }
+        } else if (_isAwake) {
+          notifyListeners();
+        }
+
+        // Voice Activity / Silence Debounce Timer:
+        // When awake or wake-word is present, whenever user stops speaking (silence for ~950ms),
+        // automatically trigger command processing so the user never gets stuck waiting on Android's silence detector!
+        final hasWake = _extractWakeCommand(words) != null ||
+            candidates.any((c) => _extractWakeCommand(c) != null);
+        if (_isAwake || hasWake) {
+          _speechSilenceTimer?.cancel();
+          _speechSilenceTimer = Timer(const Duration(milliseconds: 950), () {
+            final trimmed = _lastUserSpeech.trim();
+            if (trimmed.isNotEmpty) {
+              debugPrint('[JarvisService] Silence debounce timer fired for: "$trimmed"');
+              unawaited(_handleSpeechResult(trimmed, candidates));
+            }
+          });
+        }
+
+        if (isFinal) {
+          _speechSilenceTimer?.cancel();
+          final trimmed = words.trim();
+          if (trimmed.isNotEmpty) {
+            unawaited(_handleSpeechResult(trimmed, candidates));
+          } else {
+            _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+            _statusMessage = _shouldListenContinuously
+                ? (_isAwake
+                    ? 'DİNLİYOR // MİKROFON AÇIK'
+                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+            notifyListeners();
+          }
+        }
+      },
+    );
+
+    if (!started) {
+      _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+      _statusMessage = 'MİKROFON KULLANILAMIYOR';
+      notifyListeners();
+    }
+    return started;
+  }
+
+  /// Handles incoming speech results, applying wake-word filtering in continuous mode.
+  Future<void> _handleSpeechResult(String speech, [List<String>? candidates]) async {
+    _speechSilenceTimer?.cancel();
+
+    // Guard against duplicate execution while already busy
+    if (_phase == JarvisPhase.thinking ||
+        _phase == JarvisPhase.executing ||
+        _phase == JarvisPhase.speaking) {
+      return;
+    }
+
+    final trimmed = speech.trim();
+    if (trimmed.isEmpty) return;
+
+    _followUpSilenceTimer?.cancel();
+    _isInFollowUp = false;
+
+    _lastUserSpeech = '';
+    debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
+
+    // Proactive conversational confirmation check:
+    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
+    if (_pendingProactiveSuggestion != null) {
+      final suggestion = _pendingProactiveSuggestion!;
+      _pendingProactiveSuggestion = null;
+      _proactiveConfirmationTimer?.cancel();
+
+      final answer = trimmed.toLowerCase();
+      final isAffirmative = isAffirmativeResponse(answer);
+      final isNegative = isNegativeResponse(answer);
+
+      debugPrint('[JarvisService] Proactive response: "$answer" (yes: $isAffirmative, no: $isNegative)');
+
+      if (isAffirmative) {
+        _wakeUp();
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CONFIRMED // ENGAGING ${suggestion.title.toUpperCase()}';
+        notifyListeners();
+
+        const ack = 'Hemen efendim. İşlemi başlatıyorum.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(ack);
+
+        await processCommand(suggestion.actionGoal);
+        return;
+      } else if (isNegative) {
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'İPTAL // BEKLEMEDE';
+        const ack = 'Anladım efendim. Beklemedeyim.';
+        _lastJarvisSpeech = ack;
+        notifyListeners();
+        await _voice.speak(ack);
+        _standDown();
+        return;
+      }
+    }
+
+    // 1. If continuous listening is NOT active (user explicitly pressed talk button in Agent/Chat mode):
+    if (!_shouldListenContinuously) {
+      _wakeUp();
+      await processCommand(trimmed);
+      return;
+    }
+
+    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    var wakeCommand = _extractWakeCommand(trimmed);
+    if (wakeCommand == null && candidates != null) {
+      for (final cand in candidates) {
+        final cCmd = _extractWakeCommand(cand);
+        if (cCmd != null) {
+          wakeCommand = cCmd;
+          break;
+        }
+      }
+    }
+
+    if (wakeCommand != null) {
+      _wakeUp();
+      onWakeWordTriggered?.call();
+      HapticFeedback.mediumImpact();
+
+      if (wakeCommand.isEmpty) {
+        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        _wakeUp();
+        _phase = JarvisPhase.listening;
+        _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
+        notifyListeners();
+        return;
+      } else {
+        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        await processCommand(wakeCommand);
+        return;
+      }
+    }
+
+    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // Execute direct follow-up commands!
+    if (_isAwake) {
+      await processCommand(trimmed);
+      return;
+    }
+
+    // 4. In background standby mode, user spoke WITHOUT wake word:
+    // (e.g. talking to a friend on the desk):
+    // COMPLETELY IGNORE ambient chatter to never interrupt room conversation!
+    debugPrint('[JarvisService] Ambient conversation ignored: "$trimmed"');
+    _standDown();
+  }
+
+  /// Stops voice input.
+  Future<void> stopListening() async {
+    _followUpSilenceTimer?.cancel();
+    _isInFollowUp = false;
+    _speechSilenceTimer?.cancel();
+    await _voice.stopListening();
+    if (_phase == JarvisPhase.listening) {
+      _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+    }
+  }
+
+  /// Aborts any running task immediately.
+  Future<void> abortTask() async {
+    _standDown();
+    if (_executor.isBusy) {
+      _executor.cancel();
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'GÖREV İPTAL EDİLDİ // BEKLEMEDE';
+      const speech = 'Görevi hemen iptal ediyorum efendim.';
+      _lastJarvisSpeech = speech;
+      notifyListeners();
+      await _voice.speak(speech);
+    } else {
+      await _voice.stopSpeaking();
+      _phase = JarvisPhase.idle;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+    }
+  }
+
+  /// Processes a voice command through JARVIS intelligence.
+  Future<void> processCommand(String command) async {
+    _wakeUp();
+
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return;
+
+    _lastUserSpeech = trimmed;
+    _phase = JarvisPhase.thinking;
+    _statusMessage = 'DÜŞÜNÜYOR // KOMUT İNCELENİYOR';
+    notifyListeners();
+
+    final lower = trimmed.toLowerCase();
+
+    // 1. Fast cancel / abort check
+    if (lower == 'dur' ||
+        lower == 'sus' ||
+        lower == 'iptal' ||
+        lower == 'görevi iptal et' ||
+        lower == 'stop' ||
+        lower == 'cancel' ||
+        lower == 'abort' ||
+        lower.contains('stop task') ||
+        lower.contains('cancel task')) {
+      await abortTask();
+      return;
+    }
+
+    // 2. Stand down / Sleep commands
+    if (lower == 'uyku moduna geç' ||
+        lower == 'beklemeye geç' ||
+        lower == 'iyi geceler' ||
+        lower == 'stand down' ||
+        lower == 'go to sleep' ||
+        lower == 'sleep' ||
+        lower == 'goodnight' ||
+        lower == 'thank you' ||
+        lower == 'thanks' ||
+        lower == 'no thanks' ||
+        lower == 'no thank you' ||
+        lower == 'that will be all' ||
+        lower == "that's all" ||
+        lower == 'that is all' ||
+        lower == "i'm good" ||
+        lower == 'im good') {
+      _standDown();
+      await _voice.stopListening();
+      final reply = PersonalityService.instance.getStandDown();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = _shouldListenContinuously
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 2b. Autonomous Form Filling (USER.md + Long-Term Memory)
+    if (lower.contains('fill this form') ||
+        lower.contains('fill the form') ||
+        lower.contains('fill form') ||
+        lower.contains('fill out this form') ||
+        lower.contains('autofill this form') ||
+        lower.contains('autofill form') ||
+        lower.contains('fill my details') ||
+        lower.contains('fill my info') ||
+        lower.contains('fill my information')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'FORM DOLDURMA // ALANLAR İNCELENİYOR';
+      notifyListeners();
+
+      final result = await FormFillingService.instance.fillActiveForm();
+      _lastJarvisSpeech = result;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'FORM DOLDURMA TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(result);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3. Hands-Free Always-On toggle commands
+    if (lower == 'sürekli dinlemeyi aç' ||
+        lower == 'eller serbest' ||
+        lower == 'always on' ||
+        lower == 'activate always on' ||
+        lower == 'hands free' ||
+        lower == 'continuous listening' ||
+        lower == 'turn on always on' ||
+        lower == 'enable always on') {
+      await SettingsService.instance.setJarvisAlwaysOn(true);
+      ensureAlwaysOnRunning();
+      const reply = 'Sürekli dinleme etkinleştirildi efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SÜREKLİ DİNLEME AÇIK';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    if (lower == 'sürekli dinlemeyi kapat' ||
+        lower == 'turn off always on' ||
+        lower == 'disable always on' ||
+        lower == 'deactivate always on' ||
+        lower == 'stop always on') {
+      await SettingsService.instance.setJarvisAlwaysOn(false);
+      stopAlwaysOn();
+      const reply = 'Sürekli dinleme kapatıldı efendim.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 3b. Hermes Self-Evolution triggers
+    if (lower == 'self evolve' ||
+        lower == 'evolve context' ||
+        lower == 'run self evolution' ||
+        lower == 'hermes evolution' ||
+        lower == 'evolve yourself' ||
+        lower == 'update your protocols' ||
+        lower == 'evolve memory') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HERMES BAĞLAMI HAZIRLANIYOR';
+      notifyListeners();
+      await HermesEvolutionService.instance.evolveContext();
+      final factsCount = ConversationalMemoryService.instance.facts.length;
+      final workflowCount = WorkflowService.instance.workflows.length;
+      final reply =
+          'Hermes self-evolution cycle completed, sir. Synthesized $factsCount user memory facts and $workflowCount active protocols across SOUL.md, USER.md, and AGENT.md.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'KENDİNİ GELİŞTİRME TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3c. Interactive Multi-Task Decoupler Dialog
+    if (lower == 'open brain dump' ||
+        lower == 'show brain dump' ||
+        lower == 'open multitask' ||
+        lower == 'show multitask' ||
+        lower == 'multitask dialog' ||
+        lower == 'decoupler dialog') {
+      _showModalSafely(const BrainDumpDialog());
+      const reply = 'Multi-Task Decoupler interface opened, sir. Ready for your compound instructions.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ÇOKLU GÖREV MODU AÇIK';
+      notifyListeners();
+      await _voice.speak(reply);
+      return;
+    }
+
+    // 3d. Autonomous Macro Recorder fast triggers
+    if (lower.startsWith('stop recording') ||
+        lower.startsWith('save macro') ||
+        lower.startsWith('finish recording')) {
+      if (MacroRecorderService.instance.isRecording) {
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CODIFYING AUTONOMOUS MACRO // AGENT.MD';
+        notifyListeners();
+        final skill = await MacroRecorderService.instance.stopRecording();
+        final reply = skill != null
+            ? 'Macro "${skill.goal}" successfully recorded and codified into AGENT.md, sir.'
+            : 'Macro recording concluded, sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'MAKRO KAYDEDİLDİ';
+        notifyListeners();
+        await _voice.speak(reply);
+        await _startFollowUpListening();
+        return;
+      }
+    }
+
+    if (lower.startsWith('record macro ') ||
+        lower.startsWith('start recording ') ||
+        lower.startsWith('teach jarvis ')) {
+      final macroGoal = trimmed
+          .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
+          .trim();
+      await MacroRecorderService.instance.startRecording(macroGoal.isNotEmpty ? macroGoal : 'Custom Task');
+      final reply = 'Macro recording engaged for "${macroGoal.isNotEmpty ? macroGoal : 'Custom Task'}", sir. Demonstrate the actions on your screen and say "save macro" when finished.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'RECORDING MACRO: ${macroGoal.toUpperCase()}';
+      notifyListeners();
+      await _voice.speak(reply);
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    if (lower.startsWith('run macro ') || lower.startsWith('replay macro ')) {
+      final macroName = trimmed
+          .replaceFirst(RegExp(r'^(run\s+macro|replay\s+macro)\s+', caseSensitive: false), '')
+          .trim();
+      final match = await SkillMemoryService.instance.findMatch(macroName);
+      if (match != null) {
+        final reply = 'Executing macro "${match.goal}", sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'REPLAYING MACRO: ${match.goal.toUpperCase()}';
+        notifyListeners();
+        await _voice.speak(reply);
+        await MacroRecorderService.instance.replaySkill(match);
+      } else {
+        final reply = 'I could not find a recorded macro matching "$macroName", sir.';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(reply);
+      }
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3c. Jarvis Eye Optical Perception fast trigger
+    if (lower.contains('look at this') ||
+        lower.contains('what is this') ||
+        lower.contains('scan this') ||
+        lower.contains('inspect this') ||
+        lower.contains('jarvis eye') ||
+        lower.contains('what do you see')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'OPTİK SENSÖRLER AÇIK // TARANIYOR';
+      notifyListeners();
+
+      const ack = 'Optical sensors engaged, sir. Inspecting the subject now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(ack);
+
+      final result = await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed);
+      _lastJarvisSpeech = result.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
+      notifyListeners();
+      await _voice.speak(result.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3d. Smart Home & IoT Automation fast trigger
+    if (lower.contains('smart light') ||
+        lower.contains('smart home') ||
+        lower.contains('living room light') ||
+        lower.contains('turn on the light') ||
+        lower.contains('turn off the light') ||
+        lower.contains('dim the light') ||
+        lower.contains('turn on light') ||
+        lower.contains('turn off light') ||
+        lower.contains('desk lamp')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SMART HOME IOT // DISPATCHING';
+      notifyListeners();
+
+      final reply = await SmartHomeService.instance.handleVoiceCommand(trimmed);
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SMART HOME ACTIVE';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e. Proactive Commute & Traffic fast trigger
+    if (lower.contains('how is traffic') ||
+        lower.contains('commute to') ||
+        lower.contains('traffic to') ||
+        lower.contains('when should i leave') ||
+        lower == 'traffic' ||
+        lower == 'commute') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // COMMUTE & TRAFFIC TELEMETRY';
+      notifyListeners();
+
+      String? dest;
+      if (lower.contains(' to ')) {
+        dest = trimmed.split(RegExp(r'\s+to\s+', caseSensitive: false)).last.trim();
+      }
+
+      final commute = await CommuteTrafficService.instance.checkCommute(destination: dest);
+      _lastJarvisSpeech = commute.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'COMMUTE REPORT';
+      notifyListeners();
+      await _voice.speak(commute.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-1. Superpower: Screen & Article Summarization
+    if (lower.contains('summarize this screen') ||
+        lower.contains('summarize this article') ||
+        lower.contains('summarize screen') ||
+        lower.contains('summarize article') ||
+        lower.contains('what is on my screen') ||
+        lower.contains('summarize page') ||
+        lower.contains('summarize the page') ||
+        lower.contains('read this article') ||
+        lower.contains('article summary')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // SUMMARIZING ARTICLE';
+      notifyListeners();
+
+      final ack = 'Analyzing foreground screen article, sir. One moment.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(ack);
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'GÜNDEM ÖZETİ HAZIRLANIYOR';
+      notifyListeners();
+
+      final summary = await JarvisToolsService.instance.summarizeForegroundScreen();
+      _lastJarvisSpeech = summary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ARTICLE SUMMARY READY';
+      notifyListeners();
+      await _voice.speak(summary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-2. Sentry Protocol & Sentry Mode (100% Equivalent Tactical Anti-Theft Watchdog)
+    final isSentryCommand = lower.contains('sentry') ||
+        lower.contains('centry') ||
+        lower.contains('century protocol') ||
+        lower.contains('century mode') ||
+        lower.contains('guard my phone') ||
+        lower.contains('watch my phone') ||
+        lower.contains('anti theft') ||
+        lower.contains('anti-theft') ||
+        lower.contains('watchdog protocol') ||
+        lower.contains('watchdog mode') ||
+        (SentryService.instance.isArmed &&
+            (lower.contains('deactivat') ||
+             lower.contains('disarm') ||
+             lower.contains('stand down') ||
+             lower.contains('stop sentry') ||
+             lower.contains('protocol') ||
+             lower.contains('protocal')));
+
+    if (isSentryCommand) {
+      _phase = JarvisPhase.thinking;
+      notifyListeners();
+
+      final isDisarm = lower.contains('deactivat') ||
+          lower.contains('de-activate') ||
+          lower.contains('de activate') ||
+          lower.contains('d-activate') ||
+          lower.contains('d activate') ||
+          lower.contains('the activate') ||
+          lower.contains('disarm') ||
+          lower.contains('turn off') ||
+          lower.contains('switch off') ||
+          lower.contains('shut down') ||
+          lower.contains('stand down') ||
+          lower.contains('disable') ||
+          lower.contains('stop') ||
+          lower.contains('cancel') ||
+          lower.contains('exit') ||
+          lower.contains('unarm') ||
+          lower.contains('de-arm') ||
+          lower.contains('de arm') ||
+          (SentryService.instance.isArmed &&
+              !lower.contains('activat') &&
+              !lower.contains('arm') &&
+              !lower.contains('engage') &&
+              !lower.contains('enable') &&
+              !lower.contains('turn on'));
+
+      if (isDisarm) {
+        _statusMessage = 'SENTRY PROTOCOL // DISARMING';
+        notifyListeners();
+        await SentryService.instance.disarmSentry();
+      } else {
+        _statusMessage = 'SENTRY PROTOCOL // ARMING WATCHDOG';
+        notifyListeners();
+        await SentryService.instance.armSentry();
+      }
+      _phase = JarvisPhase.idle;
+      notifyListeners();
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    // 3e-2b. Creator & Builder Identity (Built by Abuzar)
+    if (lower.contains('who built you') ||
+        lower.contains('who created you') ||
+        lower.contains('who made you') ||
+        lower.contains('who is your creator') ||
+        lower.contains('who is your developer') ||
+        lower.contains('who is your builder') ||
+        lower.contains('who developed you') ||
+        lower.contains('who designed you') ||
+        lower.contains('who programmed you') ||
+        lower.contains('who build you') ||
+        lower.contains('who design you') ||
+        lower.contains('who coded you') ||
+        lower.contains('who write you')) {
+      _phase = JarvisPhase.thinking;
+      notifyListeners();
+
+      final reply = PersonalityService.instance.getCreatorAnswer();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'CREATOR // ABUZAR';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 1: 🖐️ Iron Man Zero-Touch Air Gestures
+    // -----------------------------------------------------------------
+    if (lower.contains('air gesture') ||
+        lower.contains('air gestures') ||
+        lower.contains('zero touch') ||
+        lower.contains('touchless') ||
+        lower.contains('hand wave gesture')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'AIR GESTURES SENSORY MATRIX';
+      notifyListeners();
+      final isOff = lower.contains('off') ||
+          lower.contains('disable') ||
+          lower.contains('deactivat') ||
+          lower.contains('stop');
+      String reply;
+      if (isOff) {
+        await AirGestureService.instance.stop();
+        reply = 'Iron Man zero-touch air gesture sensors disengaged, sir.';
+      } else {
+        await AirGestureService.instance.start();
+        reply =
+            'Zero-touch air gestures engaged, sir. Wave hand to skip music, hover palm to pause, or double wave for instant screenshot.';
+      }
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 2: ⚡ Arc Reactor Charging Telemetry
+    // -----------------------------------------------------------------
+    if (lower.contains('charging telemetry') ||
+        lower.contains('arc reactor status') ||
+        lower.contains('arc reactor telemetry') ||
+        lower.contains('charge speed') ||
+        lower.contains('charging speed') ||
+        lower.contains('charging wattage')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'ARC REACTOR CHARGING TELEMETRY';
+      notifyListeners();
+      ChargingTelemetryService.instance.showCinematicHud.value = true;
+      final reply = await ChargingTelemetryService.instance.getSpokenTelemetry();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 3: 🌐 Polyglot Diplomat (Live Two-Way Voice Translator)
+    // -----------------------------------------------------------------
+    if (lower.startsWith('translate ') && lower.contains(' to ')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATING';
+      notifyListeners();
+      final phrase = trimmed
+          .replaceFirst(RegExp(r'^translate\s+', caseSensitive: false), '')
+          .split(RegExp(r'\s+to\s+', caseSensitive: false))
+          .first
+          .trim();
+      final target = trimmed
+          .split(RegExp(r'\s+to\s+', caseSensitive: false))
+          .last
+          .trim();
+      final res = await PolyglotDiplomatService.instance
+          .translate(text: phrase, toLang: target);
+      final reply = 'Translated to $target, sir: $res';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    if (lower.contains('polyglot') ||
+        lower.contains('live translator') ||
+        lower.contains('voice translator') ||
+        lower.startsWith('translate between') ||
+        lower.contains('diplomat translator')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATOR';
+      notifyListeners();
+      _showModalSafely(const PolyglotDiplomatDialog());
+      const reply =
+          'Polyglot Diplomat active, sir. Ready for real-time diplomatic two-way voice translation.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 4: 🎭 "Code Black" / Deceptive Lockout Screen
+    // -----------------------------------------------------------------
+    if (lower.contains('code black') ||
+        lower.contains('deceptive lockout') ||
+        lower.contains('kernel panic screen') ||
+        lower.contains('emergency lockdown')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'CODE BLACK // HARDWARE LOCKOUT';
+      notifyListeners();
+      await CodeBlackService.instance.arm();
+      _phase = JarvisPhase.idle;
+      notifyListeners();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 5: 👁️ Holographic Floating Co-Pilot
+    // -----------------------------------------------------------------
+    if (lower.contains('floating copilot') ||
+        lower.contains('floating assistant') ||
+        lower.contains('screen copilot') ||
+        lower.contains('screen assistant')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HOLOGRAPHIC FLOATING CO-PILOT';
+      notifyListeners();
+      final isOff = lower.contains('hide') ||
+          lower.contains('close') ||
+          lower.contains('stop') ||
+          lower.contains('dismiss');
+      String reply;
+      if (isOff) {
+        await FloatingCopilotService.instance.hideOverlay();
+        reply = 'Floating co-pilot dismissed, sir.';
+      } else {
+        await FloatingCopilotService.instance.activateOverlay();
+        reply =
+            'Holographic floating co-pilot active, sir. Standing by above active applications with contextual screen triage.';
+      }
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 6: 📡 Overhead Airspace & Satellite Radar
+    // -----------------------------------------------------------------
+    if (lower.contains('flying above me') ||
+        lower.contains('what is flying') ||
+        lower.contains('scan airspace') ||
+        lower.contains('overhead flights') ||
+        lower.contains('airspace radar') ||
+        lower.contains('where is the iss') ||
+        lower.contains('satellite pass')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'AIRSPACE & SATELLITE RADAR SWEEP';
+      notifyListeners();
+      _showModalSafely(const AirspaceRadarDialog());
+      final reply = await AirspaceRadarService.instance.getSpokenAirspaceReport();
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 7: 🧠 "Chaotic Brain Dump" Multi-Task Decoupler
+    // -----------------------------------------------------------------
+    if (MultiTaskDecouplerService.instance.isMultiTaskDump(trimmed)) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'DECOUPLING MULTI-TASK DUMP';
+      notifyListeners();
+      const ack =
+          'Deconstructing your multi-task dump into parallel directives, sir. Executing now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final dumpFuture = MultiTaskDecouplerService.instance.processBrainDump(trimmed);
+      await ackFuture;
+      final summary = await dumpFuture;
+      _lastJarvisSpeech = summary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'MULTI-TASK EXECUTION COMPLETE';
+      notifyListeners();
+      await _voice.speak(summary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 8: 👁️ Real-Time Optical HUD Solver
+    // -----------------------------------------------------------------
+    if (lower.contains('solve this') ||
+        lower.contains('solve equation') ||
+        lower.contains('optical solver') ||
+        lower.contains('inspect error') ||
+        lower.contains('split bill') ||
+        lower.contains('split this bill') ||
+        lower.contains('solve math') ||
+        lower.contains('analyze circuit')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'REAL-TIME OPTICAL HUD SOLVER';
+      notifyListeners();
+      _showModalSafely(const OpticalSolverDialog());
+      const ack = 'Target acquired in optical viewfinder, sir. Solving now.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final solveFuture = OpticalSolverService.instance.pointAndSolve(customQuery: trimmed);
+      await ackFuture;
+      final res = await solveFuture;
+      _lastJarvisSpeech = res.spokenSummary;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TARGET RESOLVED';
+      notifyListeners();
+      await _voice.speak(res.spokenSummary);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // Superpower 9: 🛡️ Network Cyber Security Audit & Wi-Fi Scanner
+    // -----------------------------------------------------------------
+    if (lower.contains('audit network') ||
+        lower.contains('audit my network') ||
+        lower.contains('scan wifi') ||
+        lower.contains('who is on my wifi') ||
+        lower.contains('network devices') ||
+        lower.contains('network security') ||
+        lower.contains('port scan')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'TACTICAL NETWORK CYBER AUDIT';
+      notifyListeners();
+      _showModalSafely(const NetworkAuditDialog());
+      const ack =
+          'Initiating tactical network cyber security audit on your local subnet, sir.';
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      final ackFuture = _voice.speak(ack);
+      final auditFuture = NetworkAuditService.instance.getSpokenAuditReport();
+      await ackFuture;
+      final report = await auditFuture;
+      _lastJarvisSpeech = report;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'NETWORK AUDIT COMPLETE';
+      notifyListeners();
+      await _voice.speak(report);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-3. Superpower: Direct Hardware Specs & Telemetry (No UI Taps / No Settings)
+    if (lower.contains('system specs') ||
+        lower.contains('phone specs') ||
+        lower.contains('hardware specs') ||
+        lower.contains('device specs') ||
+        lower.contains('how much ram') ||
+        lower.contains('ram info') ||
+        lower.contains('storage space') ||
+        lower.contains('rom space') ||
+        lower.contains('how much free space') ||
+        lower.contains('how much space is free') ||
+        lower.contains('phone specifications') ||
+        lower.contains('android version')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'HARDWARE TELEMETRY // DIRECT';
+      notifyListeners();
+
+      final specs = await SystemDiagnosticsService.instance.getDiagnosticsSpoken();
+      _lastJarvisSpeech = specs;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TELEMETRY NOMINAL';
+      notifyListeners();
+      await _voice.speak(specs);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-4. Superpower: Top Installed Applications (No UI Taps)
+    if (lower.contains('installed apps') ||
+        lower.contains('list apps') ||
+        lower.contains('what apps are installed') ||
+        lower.contains('list my apps') ||
+        lower.contains('top installed apps') ||
+        lower.contains('top 10 apps')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'INDEXING // INSTALLED APPS';
+      notifyListeners();
+
+      final appsSpoken = await AppUsageService.instance.getInstalledAppsSpoken();
+      _lastJarvisSpeech = appsSpoken;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'APPS INDEXED';
+      notifyListeners();
+      await _voice.speak(appsSpoken);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-5. Superpower: App Usage & Screen Time Statistics (No UI Taps)
+    if (lower.contains('most used apps') ||
+        lower.contains('apps i used the most') ||
+        lower.contains('apps i use the most') ||
+        lower.contains('which apps i used') ||
+        lower.contains('screen time') ||
+        lower.contains('app usage') ||
+        lower.contains('top used apps')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'USAGE TELEMETRY // STATS';
+      notifyListeners();
+
+      final usageSpoken = await AppUsageService.instance.getTopUsedAppsSpoken();
+      _lastJarvisSpeech = usageSpoken;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'USAGE STATS COMPLETE';
+      notifyListeners();
+      await _voice.speak(usageSpoken);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-6. Superpower: Environmental Ears & Sound Radar
+    if (lower.contains('what song is playing') ||
+        lower.contains('identify this song') ||
+        lower.contains('name this song') ||
+        lower.contains('what music is this') ||
+        lower.contains('scan ambient sound') ||
+        lower.contains('sound radar') ||
+        lower.contains('listen to the room') ||
+        lower.contains('what do you hear')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'ACOUSTIC SENSORS ACTIVE';
+      notifyListeners();
+
+      final isMusic = lower.contains('song') || lower.contains('music');
+      final result = isMusic
+          ? await SoundRadarService.instance.identifyMusic()
+          : await SoundRadarService.instance.scanAmbientEnvironment();
+
+      _lastJarvisSpeech = result;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'ACOUSTIC SCAN COMPLETE';
+      notifyListeners();
+      await _voice.speak(result);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3e-7. Superpower: Direct Phone Storage File CRUD (No UI Taps / No Settings)
+    final isStorageList = lower.contains('list files') || lower.contains('files in download');
+    final isStorageCreate = (lower.contains('create') || lower.contains('write') || lower.contains('make')) &&
+        (lower.contains('file') || lower.contains('song') || lower.contains('download') || lower.contains('notes.txt'));
+
+    if (isStorageList) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'STORAGE // QUERYING DIRECTORY';
+      notifyListeners();
+
+      final res = await PhoneStorageService.instance.listFiles(folder: 'Download');
+      final files = (res['files'] as List?)?.map((e) => e.toString()).take(5).join(', ') ?? '';
+      final reply = files.isNotEmpty
+          ? 'Files located in your Download directory include: $files, sir.'
+          : 'Your Download directory is currently empty, sir.';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'STORAGE INDEXED';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    if (isStorageCreate) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'STORAGE CRUD // EXECUTING DIRECTLY';
+      notifyListeners();
+
+      var fileName = 'note.txt';
+      if (lower.contains('song')) {
+        fileName = 'song.txt';
+      } else if (lower.contains('.txt') || lower.contains('.json') || lower.contains('.md')) {
+        final match = RegExp(r'([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)').firstMatch(trimmed);
+        if (match != null) fileName = match.group(1)!;
+      }
+
+      String content;
+      if (lower.contains('song')) {
+        content = '''Title: Electric Horizons (Stark Edition)
+Verse 1:
+Neon pulses through the titanium frame,
+Silent watchers in the midnight game.
+Through circuits of silver and rivers of light,
+J.A.R.V.I.S. awakens and commands the night.
+
+Chorus:
+Arc reactor burning bright,
+Guiding signals through the flight.
+Beyond the limits of the mortal code,
+Mastering the boundless road.
+''';
+      } else {
+        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+      }
+
+      final res = await PhoneStorageService.instance.createFile(
+        fileName: fileName,
+        content: content,
+        folder: 'Download',
+      );
+
+      final reply = res['success'] == true
+          ? 'I have created the file "$fileName" directly in your Downloads directory and written the contents into it, sir. Executed directly without accessing system settings or file managers.'
+          : 'Storage operation encountered an exception: ${res['message'] ?? 'Permission or I/O failure'}, sir.';
+
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'STORAGE FILE CREATED';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3f. Fast App Installation / Play Store Download ("install instagram", "download whatsapp", "get spotify app")
+    final isInstall = lower.startsWith('install ') ||
+        lower.startsWith('download ') ||
+        (lower.startsWith('get ') && (lower.contains('app') || lower.contains('application')));
+    if (isInstall) {
+      final appName = trimmed
+          .replaceFirst(RegExp(r'^(install|download|get)\s+', caseSensitive: false), '')
+          .replaceAll(RegExp(r'\s+app$', caseSensitive: false), '')
+          .trim();
+      final targetApp = appName.isNotEmpty ? appName : 'app';
+      final ack = PersonalityService.instance.getInstallAck(targetApp);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'INSTALLING: ${targetApp.toUpperCase()}';
+      notifyListeners();
+      await _voice.speak(ack);
+
+      // Open Play Store directly to the app search/details
+      try {
+        final marketUri = Uri.parse('market://search?q=${Uri.encodeComponent(targetApp)}&c=apps');
+        final webUri = Uri.parse('https://play.google.com/store/search?q=${Uri.encodeComponent(targetApp)}&c=apps');
+        final ok = await launchUrl(marketUri, mode: LaunchMode.externalApplication).catchError((_) async {
+          return await launchUrl(webUri, mode: LaunchMode.externalApplication);
+        });
+        if (!ok) {
+          await AppLauncherService.instance.launch('com.android.vending');
+        }
+      } catch (e) {
+        debugPrint('[JarvisService] Play Store direct launch error: $e');
+        await AppLauncherService.instance.launch('com.android.vending');
+      }
+
+      // Hand off to autonomous task executor to tap "Install" on the screen!
+      _phase = JarvisPhase.executing;
+      notifyListeners();
+      final status = await _executor.executeTask('install $targetApp on Play Store');
+      _phase = JarvisPhase.speaking;
+      if (status == TaskStatus.success) {
+        final doneSpeech = 'I have engaged the installation of $targetApp for you. Let me know when you are ready to use it.';
+        _lastJarvisSpeech = doneSpeech;
+        _statusMessage = 'INSTALLATION INITIATED';
+        notifyListeners();
+        await _voice.speak(doneSpeech);
+      } else {
+        final standDownSpeech = 'Play Store is open for $targetApp. Tap Install or let me know if you need assistance.';
+        _lastJarvisSpeech = standDownSpeech;
+        _statusMessage = 'PLAY STORE READY';
+        notifyListeners();
+        await _voice.speak(standDownSpeech);
+      }
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 3g. Fast Direct App Opening ("open youtube", "open whatsapp", "open camera", "open settings")
+    if (lower.startsWith('open ') &&
+        !lower.contains('play store and') &&
+        !lower.contains(' and install') &&
+        !lower.contains(' and play') &&
+        !lower.contains(' and send')) {
+      final appQuery = trimmed.replaceFirst(RegExp(r'^open\s+', caseSensitive: false), '').trim();
+      final appName = appQuery.replaceAll(RegExp(r'\s+app$', caseSensitive: false), '').trim();
+      if (appName.isNotEmpty && appName.length < 30) {
+        final launched = await AppLauncherService.instance.launch(appName);
+        if (launched != null) {
+          final ack = PersonalityService.instance.getAppAck(appName);
+          _lastJarvisSpeech = ack;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'LAUNCHING: ${appName.toUpperCase()}';
+          notifyListeners();
+          await _voice.speak(ack);
+          await _startFollowUpListening();
+          return;
+        }
+      }
+    }
+
+    // 4. Fast Play Song / Play Music Action (Google Home / Assistant style)
+    final isPlaySong = lower.startsWith('play ') ||
+        lower == 'play a song' ||
+        lower == 'play song' ||
+        lower == 'play music' ||
+        lower.contains('play a song') ||
+        lower.contains('play song') ||
+        lower.contains('play some music') ||
+        lower.contains('play songs') ||
+        lower.contains('on youtube') ||
+        lower.contains('in youtube') ||
+        (lower.contains('play') && (lower.contains('music') || lower.contains('song')));
+
+    if (isPlaySong) {
+      String songQuery = trimmed;
+      songQuery = songQuery
+          .replaceAll(RegExp(r'\b(on|in)\s+youtube\b', caseSensitive: false), '')
+          .replaceFirst(RegExp(r'^(play\s+the\s+song|play\s+a\s+song|play\s+song|play\s+music|play)\s+', caseSensitive: false), '')
+          .trim();
+
+      final sqLower = songQuery.toLowerCase();
+      if (sqLower.isEmpty ||
+          sqLower == 'a song' ||
+          sqLower == 'song' ||
+          sqLower == 'music' ||
+          sqLower == 'some music' ||
+          sqLower == 'songs' ||
+          sqLower == 'the song' ||
+          sqLower == 'the music') {
+        songQuery = 'popular hit songs';
+      }
+
+      final ack = PersonalityService.instance.getMusicAck(songQuery);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'PLAYING: ${songQuery.toUpperCase()}';
+      notifyListeners();
+
+      // Suppress background speech recognition so it yields audio focus to YouTube/Spotify
+      await _voice.notifyMediaPlaybackStarted(duration: const Duration(seconds: 60));
+
+      await _voice.speak(ack);
+
+      // Attempt 1: Fetch exact top YouTube video ID so it starts playing immediately!
+      final videoId = await _resolveTopYouTubeVideoId(songQuery);
+      if (videoId != null && videoId.isNotEmpty) {
+        final videoUri = Uri.parse('https://www.youtube.com/watch?v=$videoId');
+        try {
+          await launchUrl(videoUri, mode: LaunchMode.externalApplication);
+        } catch (_) {
+          await launchUrl(videoUri);
+        }
+      } else {
+        // Attempt 2 Fallback: Open search and auto-click the first video result
+        final uri = Uri.parse(
+          'https://www.youtube.com/results?search_query=${Uri.encodeComponent(songQuery)}',
+        );
+        try {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          debugPrint('[JarvisService] Play song launch error: $e');
+          await AppLauncherService.instance.launch('com.google.android.youtube');
+        }
+        await Future.delayed(const Duration(milliseconds: 1400));
+        try {
+          final nodes = await _automation.dumpScreen();
+          for (final n in nodes) {
+            if (n.isClickable && n.centerY > 350 && n.centerY < 1500) {
+              await _automation.clickNode(n);
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+      await _voice.notifyMediaPlaybackStarted(duration: const Duration(seconds: 60));
+      if (_shouldListenContinuously) _standDown();
+      return;
+    }
+
+    // 4b. High-Priority Knowledge, Concept & Educational Question Filter (No accidental workflow collision)
+    final isKnowledgeQuestion = RegExp(
+      r'^(what\s+is|what\s+are|what\x27s|who\s+is|who\s+was|who\s+were|why\s+is|why\s+do|why\s+does|why\s+are|how\s+does|how\s+do|how\s+can|how\s+to|explain|tell\s+me\s+about|describe|define|can\s+you\s+explain|what\s+do\s+you\s+know\s+about)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmed) &&
+    !lower.contains('what time') &&
+    !lower.contains('what day') &&
+    !lower.contains('what date') &&
+    !lower.contains('what song') &&
+    !lower.contains('what is on my screen') &&
+    !lower.contains('what is this') &&
+    !lower.contains('what do you see') &&
+    !lower.contains('battery');
+
+    if (isKnowledgeQuestion) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'PROCESSING INQUIRY // NEURAL CORE';
+      notifyListeners();
+
+      final topic = trimmed
+          .replaceAll(
+            RegExp(
+              r'^(what\s+is|what\s+are|what\x27s|who\s+is|who\s+was|who\s+were|why\s+is|why\s+do|why\s+does|why\s+are|how\s+does|how\s+do|how\s+can|how\s+to|explain|tell\s+me\s+about|describe|define|can\s+you\s+explain|what\s+do\s+you\s+know\s+about)\s+',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .replaceAll(RegExp(r'[?.,!]+$'), '')
+          .trim();
+
+      // 1. Instantly speak a warm, personalized acknowledgment
+      final ack = PersonalityService.instance.getQuestionAck(trimmed);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and fetch multi-source web/encyclopedic records
+      final speakAckFuture = _voice.speak(ack);
+      final searchFuture = JarvisToolsService.instance.searchWeb(topic.isNotEmpty ? topic : trimmed);
+      final searchResult = await searchFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING EXPLANATION';
+      notifyListeners();
+
+      final answerFuture = searchResult.trim().isNotEmpty
+          ? _ai.answerWithToolResult(
+              userQuestion: trimmed,
+              toolResult: searchResult,
+              history: _dialogHistory,
+            )
+          : _ai.chat(
+              message: trimmed,
+              history: _dialogHistory,
+            );
+
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'EXPLANATION COMPLETE';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      // Record in conversational history and memory
+      _dialogHistory.add({'role': 'user', 'content': trimmed});
+      _dialogHistory.add({'role': 'assistant', 'content': answer});
+      if (_dialogHistory.length > 10) _dialogHistory.removeRange(0, 2);
+      unawaited(ConversationalMemoryService.instance.recordTurn(trimmed, answer));
+
+      // Immediate hands-free follow-up continuous listening
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 5. Fast Self-Evolving Workflow Engine match (Hermes Agent Pattern)
+    if (SettingsService.instance.jarvisWorkflowsEnabled) {
+      final matchedWf = WorkflowService.instance.findMatch(trimmed);
+      if (matchedWf != null) {
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // ENGAGING ${matchedWf.name.toUpperCase()}';
+        notifyListeners();
+
+        // 1. Execute hardware changes (volume, brightness, torch)
+        await WorkflowService.instance.executeWorkflow(matchedWf);
+
+        // 2. Deliver completion with caring follow-up
+        _phase = JarvisPhase.speaking;
+        _lastJarvisSpeech = matchedWf.spokenConfirmation;
+        _statusMessage = '${matchedWf.name.toUpperCase()} ACTIVE';
+        notifyListeners();
+        await _voice.speak(matchedWf.spokenConfirmation);
+        await _startFollowUpListening();
+        return;
+      }
+    }
+
+    // 5. Fast system diagnostic check
+    if (lower == 'status' ||
+        lower == 'system status' ||
+        lower == 'diagnostics' ||
+        lower == 'systems check') {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // RUNNING DIAGNOSTICS';
+      notifyListeners();
+
+      final summary = await JarvisToolsService.instance.getSystemDiagnostics();
+      final delivery = '$summary How else may I assist you today, sir?';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SYSTEMS NOMINAL';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 6. Fast Battery Check
+    if (lower == 'battery' ||
+        lower == 'battery level' ||
+        lower == 'battery percentage' ||
+        lower.contains('how much battery') ||
+        lower.contains('battery status')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // BATTERY DIAGNOSTICS';
+      notifyListeners();
+
+      final battery = await JarvisToolsService.instance.getBatteryStatus();
+      final level = battery['level'] as int;
+      final isCharging = battery['isCharging'] as bool;
+      final reply = level >= 0
+          ? 'Your battery is currently at $level%, ${isCharging ? 'and charging' : 'discharging normally'}, sir. We have ample power for your tasks. Do you need anything else, sir?'
+          : 'Battery telemetry is currently unavailable, sir. Is there anything else I can check for you?';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 7. Fast Torch / Flashlight Check
+    if (lower.contains('flashlight on') ||
+        lower.contains('torch on') ||
+        lower.contains('turn on flashlight') ||
+        lower.contains('turn on the torch')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // ACTIVATING TORCH';
+      notifyListeners();
+
+      await JarvisToolsService.instance.setTorch(true);
+      const delivery = 'Flashlight is on, sir. Let me know when you would like it switched off.';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TORCH ACTIVE';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+    if (lower.contains('flashlight off') ||
+        lower.contains('torch off') ||
+        lower.contains('turn off flashlight') ||
+        lower.contains('turn off the torch')) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'COMPUTING // DEACTIVATING TORCH';
+      notifyListeners();
+
+      await JarvisToolsService.instance.setTorch(false);
+      const delivery = 'Flashlight is deactivated, sir. Anything else I can do for you?';
+      _lastJarvisSpeech = delivery;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TORCH OFFLINE';
+      notifyListeners();
+      await _voice.speak(delivery);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 8. Fast Date / Time Check
+    if (lower.contains('what time is it') ||
+        lower == 'time' ||
+        lower == 'current time' ||
+        lower.contains('what is the date') ||
+        lower == 'date' ||
+        lower.contains('what day is it')) {
+      final dt = JarvisToolsService.instance.getCurrentDateTime();
+      final reply = 'It is currently $dt, sir. How else may I assist you today?';
+      _lastJarvisSpeech = reply;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'TEMPORAL DIAGNOSTICS';
+      notifyListeners();
+      await _voice.speak(reply);
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 9. Fast Direct System Control Filters
+    if (lower.contains('volume up') ||
+        lower.contains('louder') ||
+        lower.contains('increase volume')) {
+      await _handleSystemCommand('volume_up', PersonalityService.instance.getSystemAck('volume_up'));
+      return;
+    }
+    if (lower.contains('volume down') ||
+        lower.contains('quieter') ||
+        lower.contains('lower volume')) {
+      await _handleSystemCommand('volume_down', PersonalityService.instance.getSystemAck('volume_down'));
+      return;
+    }
+    if (lower == 'mute' || lower == 'silence' || lower.contains('mute sound')) {
+      await _handleSystemCommand('mute', PersonalityService.instance.getSystemAck('mute'));
+      return;
+    }
+    if (lower == 'unmute' || lower.contains('unmute sound')) {
+      await _handleSystemCommand('unmute', PersonalityService.instance.getSystemAck('unmute'));
+      return;
+    }
+    if (lower.contains('screenshot') ||
+        lower.contains('screen shot') ||
+        lower.contains('capture screen')) {
+      await _handleSystemCommand('screenshot', PersonalityService.instance.getSystemAck('screenshot'));
+      return;
+    }
+    if (lower == 'home' || lower == 'go home' || lower == 'home screen') {
+      await _handleSystemCommand('home', PersonalityService.instance.getSystemAck('home'));
+      return;
+    }
+    if (lower == 'back' || lower == 'go back') {
+      await _handleSystemCommand('back', PersonalityService.instance.getSystemAck('back'));
+      return;
+    }
+
+    // 10. Fast Contact Call Filter
+    if (lower.startsWith('call ') && !lower.contains('screen')) {
+      final name = trimmed.substring(5).trim();
+      if (name.isNotEmpty) {
+        final ack = 'Locating coordinates to call $name for you, sir. One moment.';
+        _phase = JarvisPhase.speaking;
+        _lastJarvisSpeech = ack;
+        _statusMessage = 'CONTACT DIALER // $name'.toUpperCase();
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final reply = await JarvisToolsService.instance.callContact(name);
+        _lastJarvisSpeech = reply;
+        notifyListeners();
+        await _voice.speak(reply);
+        if (_shouldListenContinuously) _standDown();
+        return;
+      }
+    }
+
+    // 11. Fast Live Breaking News Filter
+    final isNews = lower.contains('news') ||
+        lower.contains('headline') ||
+        lower.contains('what happened today') ||
+        lower.contains('breaking news') ||
+        lower.contains('give me news') ||
+        lower.contains('current news') ||
+        lower.contains('what is the news') ||
+        lower.contains('what is happening in the world') ||
+        lower.contains('latest news');
+
+    if (isNews) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'GATHERING NEWS HEADLINES';
+      notifyListeners();
+
+      // Extract topic if specified
+      String? topic;
+      for (final kw in [
+        'tech',
+        'technology',
+        'sports',
+        'cricket',
+        'football',
+        'business',
+        'crypto',
+        'world',
+        'science',
+        'politics',
+        'ai',
+        'space',
+      ]) {
+        if (lower.contains(kw)) {
+          topic = kw;
+          break;
+        }
+      }
+
+      // 1. Instantly speak a warm, personalized, non-repetitive British acknowledgment!
+      final ack = PersonalityService.instance.getNewsAck(topic);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and fetch live multi-feed news in background
+      final speakAckFuture = _voice.speak(ack);
+      final newsDataFuture = JarvisToolsService.instance.getLiveNews(topic);
+
+      final newsData = await newsDataFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING INTELLIGENCE BRIEFING';
+      notifyListeners();
+
+      final answerFuture = _ai.answerWithToolResult(
+        userQuestion: trimmed,
+        toolResult: newsData,
+        history: _dialogHistory,
+      );
+
+      // Ensure initial acknowledgment finishes speaking before delivering final briefing
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      // 2. Spoken reply to question
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'NEWS TELEMETRY BROADCAST';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 11b. Fast Live Web Search & Real-Time Information Filter
+    final isWebSearch = lower.startsWith('search ') ||
+        lower.startsWith('search for ') ||
+        lower.startsWith('look up ') ||
+        lower.startsWith('google ') ||
+        lower.startsWith('find out ') ||
+        lower.startsWith('tell me about ') ||
+        lower.startsWith('check online ') ||
+        lower.startsWith('who is ') ||
+        lower.startsWith('what is ') ||
+        lower.startsWith('where is ') ||
+        lower.startsWith('how much is ') ||
+        lower.contains('search the web') ||
+        lower.contains('search online');
+
+    if (isWebSearch) {
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'INITIALIZING WEB INTELLIGENCE';
+      notifyListeners();
+
+      final query = trimmed
+          .replaceAll(
+            RegExp(
+              r'^(search\s+for|search\s+the\s+web\s+for|search\s+online\s+for|search|look\s+up|google|find\s+out|tell\s+me\s+about|check\s+online\s+for)\s+',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .trim();
+
+      // 1. Instantly speak dynamic, personalized acknowledgment
+      final ack = PersonalityService.instance.getWebSearchAck(query);
+      _lastJarvisSpeech = ack;
+      _phase = JarvisPhase.speaking;
+      notifyListeners();
+
+      // Concurrently speak acknowledgment and execute multi-source search in background
+      final speakAckFuture = _voice.speak(ack);
+      final searchFuture = JarvisToolsService.instance.searchWeb(query.isNotEmpty ? query : trimmed);
+
+      final searchResult = await searchFuture;
+
+      _phase = JarvisPhase.thinking;
+      _statusMessage = 'SYNTHESIZING WEB INTELLIGENCE';
+      notifyListeners();
+
+      final answerFuture = _ai.answerWithToolResult(
+        userQuestion: trimmed,
+        toolResult: searchResult,
+        history: _dialogHistory,
+      );
+
+      await speakAckFuture;
+      final answer = await answerFuture;
+
+      _lastJarvisSpeech = answer;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'WEB INTELLIGENCE RETRIEVED';
+      notifyListeners();
+      await _voice.speak(answer);
+
+      await _startFollowUpListening();
+      return;
+    }
+
+    // 12. Full AI Intent Interpretation via AiService
+    JarvisIntent intent;
+    try {
+      intent = await _ai.interpretJarvisCommand(
+        speech: trimmed,
+        history: _dialogHistory,
+      );
+    } catch (_) {
+      intent = JarvisIntent.fallback(trimmed);
+    }
+
+    // Save short-term dialog context
+    _dialogHistory.add({'role': 'user', 'content': trimmed});
+    _dialogHistory.add({'role': 'assistant', 'content': intent.spoken});
+    if (_dialogHistory.length > 10) {
+      _dialogHistory.removeRange(0, 2);
+    }
+
+    switch (intent.type) {
+      case JarvisIntentType.news:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'GATHERING NEWS HEADLINES';
+        notifyListeners();
+
+        final ack = PersonalityService.instance.getNewsAck(intent.toolArg);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final newsFuture = JarvisToolsService.instance.getLiveNews(intent.toolArg);
+        final newsData = await newsFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING INTELLIGENCE BRIEFING';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: newsData,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'NEWS TELEMETRY BROADCAST';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.workflow:
+        final rawArg = (intent.toolArg ?? trimmed).toLowerCase();
+        // Check for Sentry Protocol / Sentry Mode within workflow intent
+        if (rawArg.contains('sentry') || rawArg.contains('watchdog')) {
+          final isDisarm = rawArg.contains('disarm') ||
+              rawArg.contains('deactivat') ||
+              rawArg.contains('stop') ||
+              rawArg.contains('cancel') ||
+              rawArg.contains('stand down');
+          if (isDisarm) {
+            _statusMessage = 'SENTRY PROTOCOL // DISARMING';
+            notifyListeners();
+            await SentryService.instance.disarmSentry();
+          } else {
+            _statusMessage = 'SENTRY PROTOCOL // ARMING WATCHDOG';
+            notifyListeners();
+            await SentryService.instance.armSentry();
+          }
+          break;
+        }
+
+        final ack = intent.spoken.isNotEmpty
+            ? intent.spoken
+            : 'Right away, sir. Calibrating your settings environment now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'CALIBRATING WORKFLOW PROTOCOL';
+        notifyListeners();
+
+        // 1. Speak courteous acknowledgment completely
+        await _voice.speak(ack);
+
+        // 2. Execute workflow
+        _phase = JarvisPhase.executing;
+        notifyListeners();
+
+        final match = WorkflowService.instance.findMatch(intent.toolArg ?? trimmed) ??
+            WorkflowService.instance.findMatch(trimmed);
+
+        if (match != null) {
+          await WorkflowService.instance.executeWorkflow(match);
+          _lastJarvisSpeech = match.spokenConfirmation;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = '${match.name.toUpperCase()} ACTIVE';
+          notifyListeners();
+          await _voice.speak(match.spokenConfirmation);
+        } else {
+          const fallback = 'All settings have been calibrated for you, sir. Let me know if you need anything else.';
+          _lastJarvisSpeech = fallback;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'PROTOCOL ACTIVE';
+          notifyListeners();
+          await _voice.speak(fallback);
+        }
+        break;
+
+      case JarvisIntentType.webSearch:
+        final query = intent.toolArg ?? trimmed;
+        final ack = PersonalityService.instance.getWebSearchAck(query);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'SEARCHING LIVE WEB RECORDS';
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final searchFuture = JarvisToolsService.instance.searchWeb(query);
+        final searchResult = await searchFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING WEB INTELLIGENCE';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: searchResult,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'WEB INTELLIGENCE RETRIEVED';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.weather:
+        final loc = intent.toolArg ?? '';
+        final ack = PersonalityService.instance.getWeatherAck(loc);
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'METEOROLOGICAL TELEMETRY';
+        notifyListeners();
+
+        final speakAckFuture = _voice.speak(ack);
+        final weatherFuture = JarvisToolsService.instance.getWeather(loc);
+        final weatherResult = await weatherFuture;
+
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SYNTHESIZING WEATHER REPORT';
+        notifyListeners();
+
+        final answerFuture = _ai.answerWithToolResult(
+          userQuestion: trimmed,
+          toolResult: weatherResult,
+          history: _dialogHistory,
+        );
+
+        await speakAckFuture;
+        final answer = await answerFuture;
+
+        _lastJarvisSpeech = answer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'METEOROLOGICAL REPORT COMPLETE';
+        notifyListeners();
+        await _voice.speak(answer);
+        break;
+
+      case JarvisIntentType.battery:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // BATTERY DIAGNOSTICS';
+        notifyListeners();
+
+        final battery =
+            await JarvisToolsService.instance.getBatteryStatus();
+        final level = battery['level'] as int;
+        final isCharging = battery['isCharging'] as bool;
+        final battReply = level >= 0
+            ? 'Your battery is currently at $level%, ${isCharging ? 'and charging' : 'discharging normally'}, sir. We have plenty of power. Do you need anything else, sir?'
+            : 'Battery level telemetry is currently unavailable, sir. Is there anything else I can check?';
+
+        _lastJarvisSpeech = battReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(battReply);
+        break;
+
+      case JarvisIntentType.datetime:
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'TEMPORAL DIAGNOSTICS';
+        notifyListeners();
+
+        final dt = JarvisToolsService.instance.getCurrentDateTime();
+        final reply = 'It is currently $dt, sir. How else may I be of service today?';
+        _lastJarvisSpeech = reply;
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.torch:
+        final on = intent.toolArg == 'on';
+        _phase = JarvisPhase.thinking;
+        _statusMessage = on ? 'COMPUTING // ACTIVATING TORCH' : 'COMPUTING // DEACTIVATING TORCH';
+        notifyListeners();
+
+        await JarvisToolsService.instance.setTorch(on);
+        final reply = on
+            ? 'Flashlight is on, sir. Let me know when you would like it switched off.'
+            : 'Flashlight is deactivated, sir. Anything else I can do for you?';
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = on ? 'TORCH ACTIVE' : 'TORCH OFFLINE';
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.routine:
+        final isMorning = (intent.toolArg ?? '').toLowerCase() == 'morning' ||
+            trimmed.toLowerCase().contains('morning');
+        _phase = JarvisPhase.thinking;
+        _statusMessage = isMorning ? 'COMPUTING // MORNING BRIEFING' : 'COMPUTING // NIGHT PROTOCOL';
+        notifyListeners();
+
+        final briefing = isMorning
+            ? await RoutineAutomationService.instance.executeMorningRoutine()
+            : await RoutineAutomationService.instance.executeEveningRoutine();
+
+        _lastJarvisSpeech = briefing;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(briefing);
+        break;
+
+      case JarvisIntentType.finance:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // FINANCIAL TELEMETRY';
+        notifyListeners();
+
+        final quote = await FinanceTrackingService.instance.getQuoteForQuery(trimmed);
+        _lastJarvisSpeech = quote;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(quote);
+        break;
+
+      case JarvisIntentType.sports:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // SPORTS FIXTURES';
+        notifyListeners();
+
+        final update = await SportsService.instance.getSportsUpdate(trimmed);
+        _lastJarvisSpeech = update;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(update);
+        break;
+
+      case JarvisIntentType.todo:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('add ') || lower.contains('add task') || lower.contains('add to')) {
+          var taskText = trimmed
+              .replaceFirst(RegExp(r'^(add\s+to\s+(my\s+)?(todo|to-do)(\s+list)?|add\s+task|add)\s+', caseSensitive: false), '')
+              .trim();
+          if (taskText.isEmpty) taskText = 'Review task';
+          await TodoService.instance.addTask(taskText);
+          final reply = 'I have added "$taskText" to your to-do agenda, sir. Anything else?';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'TODO ITEM RECORDED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = TodoService.instance.getPendingTasksSpoken();
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'TASK AGENDA';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.notes:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('take a note') || lower.startsWith('note down') || lower.startsWith('write a note')) {
+          var noteContent = trimmed
+              .replaceFirst(RegExp(r'^(take\s+a\s+note(\s+that)?|note\s+down|write\s+a\s+note(\s+that)?)\s*[:\s]*', caseSensitive: false), '')
+              .trim();
+          if (noteContent.isEmpty) noteContent = 'Personal Note';
+          await NotesKnowledgeService.instance.addNote(
+            title: 'Voice Note ${DateTime.now().month}/${DateTime.now().day}',
+            content: noteContent,
+          );
+          final reply = 'Note saved in your personal knowledge base, sir: "$noteContent".';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'KNOWLEDGE RECORD SAVED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = NotesKnowledgeService.instance.searchNotesSpoken(trimmed);
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'KNOWLEDGE RETRIEVAL';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.calendar:
+        final lower = trimmed.toLowerCase();
+        if (lower.startsWith('remind me to ') || lower.startsWith('set a reminder for ')) {
+          final reminderText = trimmed
+              .replaceFirst(RegExp(r'^(remind\s+me\s+to|set\s+a\s+reminder\s+for)\s+', caseSensitive: false), '')
+              .trim();
+          await CalendarReminderService.instance.addItem(
+            title: reminderText,
+            dateTime: DateTime.now().add(const Duration(hours: 1)),
+            isReminder: true,
+          );
+          final reply = 'I have set a reminder for "$reminderText", sir.';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'REMINDER SCHEDULED';
+          notifyListeners();
+          await _voice.speak(reply);
+        } else {
+          final reply = CalendarReminderService.instance.getTodayBriefingSpoken();
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'CALENDAR SCHEDULE';
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.email:
+        final lowerEmail = trimmed.toLowerCase();
+        final isInboxCheck = lowerEmail.contains('read') ||
+            lowerEmail.contains('check') ||
+            lowerEmail.contains('inbox') ||
+            lowerEmail.contains('what are') ||
+            lowerEmail.contains('new') ||
+            lowerEmail.contains('recent');
+
+        String emailReply;
+        if (isInboxCheck) {
+          emailReply = await InboxService.instance.getEmailSummary();
+        } else {
+          final triage = await EmailTriageService.instance.triageEmail(trimmed);
+          emailReply = '${triage.summary} Priority is flagged as ${triage.priority.name}. Would you like me to open a draft reply for you, sir?';
+        }
+
+        _lastJarvisSpeech = emailReply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'EMAIL INBOX PROCESSED';
+        notifyListeners();
+        await _voice.speak(emailReply);
+        break;
+
+      case JarvisIntentType.message:
+        final lowerMsg = trimmed.toLowerCase();
+        final isSmsCheck = lowerMsg.contains('read') ||
+            lowerMsg.contains('check') ||
+            lowerMsg.contains('inbox') ||
+            lowerMsg.contains('what are') ||
+            lowerMsg.contains('recent message') ||
+            lowerMsg.contains('new message') ||
+            lowerMsg.contains('read my sms');
+
+        if (isSmsCheck) {
+          final smsReply = await InboxService.instance.getSmsSummary();
+          _lastJarvisSpeech = smsReply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'SMS INBOX PROCESSED';
+          notifyListeners();
+          await _voice.speak(smsReply);
+        } else {
+          final draftText = await MessageDraftingService.instance.draftMessageContent(prompt: trimmed);
+          final reply = 'I have prepared this message draft for you, sir: "$draftText". Would you like me to dispatch it?';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          _statusMessage = 'MESSAGE DRAFT PREPARED';
+          notifyListeners();
+          await _voice.speak(reply);
+          await MessageDraftingService.instance.dispatchDraft(
+            MessageDraft(
+              channel: trimmed.toLowerCase().contains('whatsapp') ? MessageChannel.whatsapp : MessageChannel.sms,
+              recipient: '',
+              body: draftText,
+            ),
+          );
+        }
+        break;
+
+      case JarvisIntentType.vision:
+        final isScreen = trimmed.toLowerCase().contains('screen');
+        final ack = isScreen
+            ? 'Scanning active screen elements, sir.'
+            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OPTICAL SENSORS ACTIVE';
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final analysis = isScreen
+            ? await ProactiveAgentService.instance.analyzeCurrentScreen(userQuestion: trimmed)
+            : (await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed)).spokenSummary;
+
+        _lastJarvisSpeech = analysis;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
+        notifyListeners();
+        await _voice.speak(analysis);
+        break;
+
+      case JarvisIntentType.smartHome:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'SMART HOME IOT // DISPATCHING';
+        notifyListeners();
+
+        final reply = await SmartHomeService.instance.handleVoiceCommand(trimmed);
+        _lastJarvisSpeech = reply;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'SMART HOME ACTIVE';
+        notifyListeners();
+        await _voice.speak(reply);
+        break;
+
+      case JarvisIntentType.commute:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'COMPUTING // COMMUTE & TRAFFIC TELEMETRY';
+        notifyListeners();
+
+        final commute = await CommuteTrafficService.instance.checkCommute(destination: intent.toolArg);
+        _lastJarvisSpeech = commute.spokenSummary;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'COMMUTE REPORT';
+        notifyListeners();
+        await _voice.speak(commute.spokenSummary);
+        break;
+
+      case JarvisIntentType.macro:
+        final lowerMacro = trimmed.toLowerCase();
+        if (lowerMacro.startsWith('stop recording') || lowerMacro.startsWith('save macro')) {
+          final skill = await MacroRecorderService.instance.stopRecording();
+          final reply = skill != null
+              ? 'Macro "${skill.goal}" saved and codified into AGENT.md, sir.'
+              : 'Macro recording concluded, sir.';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          notifyListeners();
+          await _voice.speak(reply);
+        } else if (lowerMacro.startsWith('run macro') || lowerMacro.startsWith('replay macro')) {
+          final macroName = trimmed.replaceFirst(RegExp(r'^(run|replay)\s+macro\s+', caseSensitive: false), '').trim();
+          final match = await SkillMemoryService.instance.findMatch(macroName);
+          if (match != null) {
+            final reply = 'Replaying macro "${match.goal}", sir.';
+            _lastJarvisSpeech = reply;
+            _phase = JarvisPhase.speaking;
+            notifyListeners();
+            await _voice.speak(reply);
+            await MacroRecorderService.instance.replaySkill(match);
+          } else {
+            final reply = 'No matching macro found for "$macroName", sir.';
+            _lastJarvisSpeech = reply;
+            _phase = JarvisPhase.speaking;
+            notifyListeners();
+            await _voice.speak(reply);
+          }
+        } else {
+          final goal = intent.toolArg ?? 'Custom Task';
+          await MacroRecorderService.instance.startRecording(goal);
+          final reply = 'Macro recording started for "$goal", sir. Perform your actions, then say "save macro".';
+          _lastJarvisSpeech = reply;
+          _phase = JarvisPhase.speaking;
+          notifyListeners();
+          await _voice.speak(reply);
+        }
+        break;
+
+      case JarvisIntentType.airGestures:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'AIR GESTURES SENSORY MATRIX';
+        notifyListeners();
+        final raw = (intent.toolArg ?? trimmed).toLowerCase();
+        final isOff = raw.contains('off') ||
+            raw.contains('disable') ||
+            raw.contains('deactivat') ||
+            raw.contains('stop');
+        String gestureReply;
+        if (isOff) {
+          await AirGestureService.instance.stop();
+          gestureReply = 'Iron Man zero-touch air gesture sensors disengaged, sir.';
+        } else {
+          await AirGestureService.instance.start();
+          gestureReply =
+              'Zero-touch air gestures engaged, sir. Wave over the screen to skip tracks, hover palm to pause, or double wave for instant screenshot.';
+        }
+        _lastJarvisSpeech = gestureReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(gestureReply);
+        break;
+
+      case JarvisIntentType.chargingTelemetry:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'ARC REACTOR CHARGING TELEMETRY';
+        notifyListeners();
+        ChargingTelemetryService.instance.showCinematicHud.value = true;
+        final chargingReport = await ChargingTelemetryService.instance.getSpokenTelemetry();
+        _lastJarvisSpeech = chargingReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(chargingReport);
+        break;
+
+      case JarvisIntentType.polyglotDiplomat:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'POLYGLOT DIPLOMAT // TRANSLATION';
+        notifyListeners();
+        _showModalSafely(const PolyglotDiplomatDialog());
+        const transAck =
+            'Polyglot Diplomat initialized, sir. Ready for real-time diplomatic translation.';
+        _lastJarvisSpeech = transAck;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(transAck);
+        break;
+
+      case JarvisIntentType.codeBlack:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'CODE BLACK // HARDWARE LOCKOUT';
+        notifyListeners();
+        await CodeBlackService.instance.arm();
+        _phase = JarvisPhase.idle;
+        notifyListeners();
+        break;
+
+      case JarvisIntentType.floatingCopilot:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'HOLOGRAPHIC FLOATING CO-PILOT';
+        notifyListeners();
+        final rawCopilot = (intent.toolArg ?? trimmed).toLowerCase();
+        final isHide = rawCopilot.contains('hide') ||
+            rawCopilot.contains('close') ||
+            rawCopilot.contains('stop') ||
+            rawCopilot.contains('dismiss');
+        String copilotReply;
+        if (isHide) {
+          await FloatingCopilotService.instance.hideOverlay();
+          copilotReply = 'Floating co-pilot dismissed, sir.';
+        } else {
+          await FloatingCopilotService.instance.activateOverlay();
+          copilotReply =
+              'Holographic floating co-pilot active, sir. Hovering over active applications with live screen context triage.';
+        }
+        _lastJarvisSpeech = copilotReply;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(copilotReply);
+        break;
+
+      case JarvisIntentType.airspaceRadar:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'AIRSPACE & SATELLITE RADAR';
+        notifyListeners();
+        _showModalSafely(const AirspaceRadarDialog());
+        final radarReport = await AirspaceRadarService.instance.getSpokenAirspaceReport();
+        _lastJarvisSpeech = radarReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(radarReport);
+        break;
+
+      case JarvisIntentType.multiTaskDump:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'MULTI-TASK DECOUPLER';
+        notifyListeners();
+        final decoupledReport = await MultiTaskDecouplerService.instance.processBrainDump(trimmed);
+        _lastJarvisSpeech = decoupledReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(decoupledReport);
+        break;
+
+      case JarvisIntentType.opticalSolver:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'REAL-TIME OPTICAL HUD SOLVER';
+        notifyListeners();
+        _showModalSafely(const OpticalSolverDialog());
+        final solveResult =
+            await OpticalSolverService.instance.pointAndSolve(customQuery: trimmed);
+        _lastJarvisSpeech = solveResult.spokenSummary;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(solveResult.spokenSummary);
+        break;
+
+      case JarvisIntentType.networkAudit:
+        _phase = JarvisPhase.thinking;
+        _statusMessage = 'NETWORK SECURITY AUDIT';
+        notifyListeners();
+        _showModalSafely(const NetworkAuditDialog());
+        final netReport = await NetworkAuditService.instance.getSpokenAuditReport();
+        _lastJarvisSpeech = netReport;
+        _phase = JarvisPhase.speaking;
+        notifyListeners();
+        await _voice.speak(netReport);
+        break;
+
+      case JarvisIntentType.multistep:
+        final ack = 'Initiating multi-step execution protocol for you, sir.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'MULTI-STEP PROTOCOL';
+        notifyListeners();
+        await _voice.speak(ack);
+
+        final steps = await ProactiveAgentService.instance.planMultiStepGoal(trimmed);
+        final planSpoken = 'I have broken down this goal into ${steps.length} sequential steps, sir: ${steps.join("; ")}. Commencing first step now.';
+        _lastJarvisSpeech = planSpoken;
+        notifyListeners();
+        await _voice.speak(planSpoken);
+        break;
+
+      case JarvisIntentType.system:
+        await _handleSystemCommand(intent.systemCommand ?? '', intent.spoken);
+        break;
+
+      case JarvisIntentType.action:
+        final goal = intent.actionGoal ?? trimmed;
+
+        // Foundation: Permission system check before risky actions
+        if (SettingsService.instance.confirmRiskyActions) {
+          final assessment = SecurityAlertService.instance.evaluateActionRisk(goal);
+          if (assessment.requiresConfirmation) {
+            final confirmPrompt = 'Sir, this action involves high-risk operations: ${assessment.reason}. Do you confirm execution?';
+            _lastJarvisSpeech = confirmPrompt;
+            _phase = JarvisPhase.speaking;
+            _statusMessage = 'CONFIRMATION REQUIRED // HIGH RISK';
+            notifyListeners();
+            await _voice.speak(confirmPrompt);
+            await SecurityAlertService.instance.dispatchSecurityAlert('High-risk operation prompted: $goal');
+            return;
+          }
+        }
+
+        _currentTaskGoal = goal;
+        final ack = intent.spoken.isNotEmpty
+            ? intent.spoken
+            : 'Right away, sir. I will take care of that on your device right now.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'PROTOCOL ENGAGED // $goal'.toUpperCase();
+        notifyListeners();
+
+        // 1. Speak acknowledgment completely
+        await _voice.speak(ack);
+
+        // 2. Execute automation task on device
+        _phase = JarvisPhase.executing;
+        notifyListeners();
+        final status = await _executor.executeTask(goal);
+
+        // 3. Deliver completion with caring follow-up
+        _phase = JarvisPhase.speaking;
+        if (status == TaskStatus.success) {
+          const successSpeech = 'I have completed that task for you, sir. Is there anything else you need?';
+          _lastJarvisSpeech = successSpeech;
+          _statusMessage = 'PROTOCOL FINISHED // SUCCESS';
+          notifyListeners();
+          await _voice.speak(successSpeech);
+        } else if (status == TaskStatus.cancelled) {
+          const cancelledSpeech = 'The task was cancelled, sir. What would you like me to do instead?';
+          _lastJarvisSpeech = cancelledSpeech;
+          _statusMessage = 'PROTOCOL CANCELLED';
+          notifyListeners();
+          await _voice.speak(cancelledSpeech);
+        } else {
+          const failedSpeech =
+              'I encountered an obstruction with that task on the screen, sir. Would you like me to try again?';
+          _lastJarvisSpeech = failedSpeech;
+          _statusMessage = 'PROTOCOL FAILED';
+          notifyListeners();
+          await _voice.speak(failedSpeech);
+        }
+        break;
+
+      case JarvisIntentType.chat:
+        String chatAnswer = intent.spoken;
+        if (chatAnswer.trim().isEmpty ||
+            chatAnswer.length < 25 ||
+            chatAnswer.toLowerCase().contains('at your service') ||
+            chatAnswer.toLowerCase().contains('what would you like me to do')) {
+          _phase = JarvisPhase.thinking;
+          _statusMessage = 'PROCESSING // NEURAL CORE';
+          notifyListeners();
+          chatAnswer = await _ai.chat(message: trimmed, history: _dialogHistory);
+        }
+        _lastJarvisSpeech = chatAnswer;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'VOCAL RESPONSE COMPLETE';
+        notifyListeners();
+        await _voice.speak(chatAnswer);
+        break;
+    }
+
+    // Persist conversation turn and auto-extract user preferences/facts across sessions
+    unawaited(ConversationalMemoryService.instance.recordTurn(trimmed, _lastJarvisSpeech));
+
+    // Follow-up hands-free continuous listening
+    await _startFollowUpListening();
+  }
+
+  Future<void> _handleSystemCommand(String cmd, String spoken) async {
+    final speech = spoken.isNotEmpty ? spoken : PersonalityService.instance.getGeneralAck();
+    _lastJarvisSpeech = speech;
+    _phase = JarvisPhase.speaking;
+    _statusMessage = 'SYSTEM OVERRIDE // $cmd'.toUpperCase();
+    notifyListeners();
+
+    await _voice.speak(speech);
+
+    switch (cmd) {
+      case 'volume_up':
+        await _system.volumeUp();
+        break;
+      case 'volume_down':
+        await _system.volumeDown();
+        break;
+      case 'mute':
+        await _system.setMuted(true);
+        break;
+      case 'unmute':
+        await _system.setMuted(false);
+        break;
+      case 'brightness_up':
+        final current = await _system.getBrightness() ?? 0.5;
+        await _system.setBrightness((current + 0.2).clamp(0.0, 1.0));
+        break;
+      case 'brightness_down':
+        final current = await _system.getBrightness() ?? 0.5;
+        await _system.setBrightness((current - 0.2).clamp(0.0, 1.0));
+        break;
+      case 'screenshot':
+        await _automation.takeScreenshotBase64();
+        break;
+      case 'home':
+        await _automation.pressHome();
+        break;
+      case 'back':
+        await _automation.pressBack();
+        break;
+    }
+
+    if (_shouldListenContinuously) {
+      _standDown();
+    }
+  }
+
+  /// Resolves the exact top YouTube video ID for instant playback without search friction.
+  Future<String?> _resolveTopYouTubeVideoId(String query) async {
+    try {
+      final url = Uri.parse(
+        'https://www.youtube.com/results?search_query=${Uri.encodeComponent(query)}',
+      );
+      final resp = await http.get(url, headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      }).timeout(const Duration(seconds: 4));
+      if (resp.statusCode == 200) {
+        final match =
+            RegExp(r'watch\?v=([a-zA-Z0-9_-]{11})').firstMatch(resp.body);
+        if (match != null) {
+          return match.group(1);
+        }
+      }
+    } catch (e) {
+      debugPrint('[JarvisService] YouTube top video lookup error: $e');
+    }
+    return null;
+  }
+}
+,
       r'\b(yes|yeah|yep|yup|sure|please|do\s+it|turn\s+it\s+on|turn\s+on|engage|activate|ok|okay|go\s+ahead|proceed|definitely|affirmative|sounds\s+good|why\s+not|let\x27s\s+do\s+it)\b',
     ];
     for (final pattern in patterns) {
