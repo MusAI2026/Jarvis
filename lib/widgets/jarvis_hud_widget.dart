@@ -430,7 +430,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                         ),
                                         const SizedBox(width: 5),
                                         Text(
-                                          isAlwaysOn ? 'ALWAYS-ON: ON' : 'ALWAYS-ON',
+                                          isAlwaysOn ? 'SÜREKLİ DİNLEME: AÇIK' : 'SÜREKLİ DİNLEME',
                                           style: TextStyle(
                                             color: color,
                                             fontSize: 9.5,
@@ -477,7 +477,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                     ),
                                     SizedBox(width: 5),
                                     Text(
-                                      'MULTITASK',
+                                      'ÇOKLU GÖREV',
                                       style: TextStyle(
                                         color: Color(0xFF00E5FF),
                                         fontSize: 9.5,
@@ -518,7 +518,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                     ),
                                     SizedBox(width: 5),
                                     Text(
-                                      'SELF EVOLVE',
+                                      'KENDİNİ GELİŞTİR',
                                       style: TextStyle(
                                         color: Color(0xFFBA68C8),
                                         fontSize: 9.5,
@@ -580,7 +580,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                         ),
                                         const SizedBox(width: 5),
                                         Text(
-                                          'AIR GESTURES',
+                                          'EL HAREKETLERİ',
                                           style: TextStyle(
                                             color: airColor,
                                             fontSize: 9.5,
@@ -683,7 +683,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                         ),
                                         const SizedBox(width: 5),
                                         Text(
-                                          isRec ? 'SAVE' : 'MACRO',
+                                          isRec ? 'KAYDET' : 'MAKRO',
                                           style: TextStyle(
                                             color: color,
                                             fontSize: 9.5,
@@ -708,10 +708,10 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                       padding: const EdgeInsets.only(bottom: 18),
                       child: Text(
                         isListening
-                            ? 'LISTENING // TAP TO FINISH'
+                            ? 'DİNLİYOR // BİTİRMEK İÇİN DOKUNUN'
                             : (_jarvis.phase == JarvisPhase.thinking
-                                ? 'COMPUTING RESPONSE...'
-                                : 'TAP SCREEN TO COMMUNICATE'),
+                                ? 'YANIT HAZIRLANIYOR...'
+                                : 'KONUŞMAK İÇİN EKRANA DOKUNUN'),
                         style: TextStyle(
                           color: themeColor.withValues(
                             alpha: isListening || _jarvis.phase == JarvisPhase.thinking ? 0.55 : 0.22,
@@ -1123,7 +1123,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'CORE // STARK-VIII\nCONSCIOUSNESS // ACTIVE\nNODES // 1024-SYNC',
+          'ÇEKİRDEK // STARK-VIII\nBİLİNÇ // AKTİF\nDÜĞÜMLER // 1024-SENKRON',
           style: TextStyle(
             color: color.withValues(alpha: 0.22),
             fontSize: 8.5,
@@ -1146,8 +1146,8 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
       children: [
         Text(
           isArc
-              ? 'QUANTUM // SYNCED\nSTABILITY // 99.8%\nCHIRALITY // NOMINAL'
-              : 'SUIT // MARK LXXXV\nHOLO // 3D-AVATAR\nTELEMETRY // OPTIC',
+              ? 'KUANTUM // SENKRON\nKARARLILIK // %99,8\nKİRALİTE // NORMAL'
+              : 'ZIRH // MARK LXXXV\nHOLOGRAM // 3B AVATAR\nTELEMETRİ // OPTİK',
           textAlign: TextAlign.end,
           style: TextStyle(
             color: color.withValues(alpha: 0.22),
@@ -1176,18 +1176,18 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
     switch (_jarvis.phase) {
       case JarvisPhase.listening:
         color = const Color(0xFF00E5FF);
-        label = 'LISTENING';
+        label = 'DİNLİYOR';
         icon = Icons.graphic_eq_rounded;
         break;
       case JarvisPhase.thinking:
         color = const Color(0xFFFFD700);
-        label = 'COMPUTING';
+        label = 'DÜŞÜNÜYOR';
         icon = Icons.psychology_outlined;
         break;
       case JarvisPhase.executing:
         color = const Color(0xFFFF9100);
         final step = _jarvis.currentStep;
-        label = step > 0 ? 'AUTOMATION STEP #$step' : 'TASK IN PROGRESS';
+        label = step > 0 ? 'OTOMASYON ADIMI #$step' : 'GÖREV SÜRÜYOR';
         icon = Icons.bolt_rounded;
         break;
       default:
@@ -1325,7 +1325,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                 ),
               ),
               child: Text(
-                'ACT',
+                'İŞLEM',
                 style: TextStyle(
                   color: themeColor,
                   fontSize: 10,
