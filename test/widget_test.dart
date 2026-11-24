@@ -185,19 +185,19 @@ void main() {
 
       expect(settings.jarvisAlwaysOn, isTrue);
       expect(settings.jarvisVoice, 'paul');
-      expect(settings.jarvisNeuralVoice, 'en-GB-RyanNeural');
+      expect(settings.jarvisNeuralVoice, 'tr-TR-AhmetNeural');
       expect(settings.useNeuralVoice, isTrue);
       expect(settings.jarvisWorkflowsEnabled, isTrue);
 
       await settings.setJarvisAlwaysOn(false);
       await settings.setJarvisVoice('friday');
-      await settings.setJarvisNeuralVoice('en-US-GuyNeural');
+      await settings.setJarvisNeuralVoice('tr-TR-EmelNeural');
       await settings.setUseNeuralVoice(false);
       await settings.setJarvisWorkflowsEnabled(false);
 
       expect(settings.jarvisAlwaysOn, isFalse);
       expect(settings.jarvisVoice, 'friday');
-      expect(settings.jarvisNeuralVoice, 'en-US-GuyNeural');
+      expect(settings.jarvisNeuralVoice, 'tr-TR-EmelNeural');
       expect(settings.useNeuralVoice, isFalse);
       expect(settings.jarvisWorkflowsEnabled, isFalse);
     });
