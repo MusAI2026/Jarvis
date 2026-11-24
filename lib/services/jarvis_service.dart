@@ -93,10 +93,10 @@ class JarvisService extends ChangeNotifier {
   String _lastUserSpeech = '';
   String get lastUserSpeech => _lastUserSpeech;
 
-  String _lastJarvisSpeech = 'At your service, sir. Say "Hey Jarvis" anytime.';
+  String _lastJarvisSpeech = 'Hizmetinizdeyim. İstediğiniz zaman "Merhaba Jarvis" diyebilirsiniz.';
   String get lastJarvisSpeech => _lastJarvisSpeech;
 
-  String _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+  String _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
   String get statusMessage => _statusMessage;
 
   String? _currentTaskGoal;
@@ -246,7 +246,7 @@ class JarvisService extends ChangeNotifier {
       if (_phase != JarvisPhase.executing) {
         _isAwake = false;
         _statusMessage = _shouldListenContinuously
-            ? 'STANDBY // SAY "HEY JARVIS"'
+            ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
             : 'READY // TAP TO TALK';
         notifyListeners();
       }
@@ -263,7 +263,7 @@ class JarvisService extends ChangeNotifier {
     _awakeTimer?.cancel();
     _lastUserSpeech = '';
     _statusMessage = _shouldListenContinuously
-        ? 'STANDBY // SAY "HEY JARVIS"'
+        ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
         : 'READY // TAP TO TALK';
     _phase = JarvisPhase.idle;
     notifyListeners();
@@ -340,7 +340,7 @@ class JarvisService extends ChangeNotifier {
     // - standalone (jarvis | javis | jervis | jarves | jarvice | charvis | garvis | jarvi)
     // - (wake up jarvis | jarvis wake up | jarvis please)
     final wakePattern = RegExp(
-      r'\b(?:(?:hey|hello|hi|okay|ok|yo|listen|wake\s+up|dear)\s+(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|gervis|travis|service|davis|davies|harvest|jarvi|google)|(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)\s+(?:wake\s+up|please|online)|(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)|(?:hey|okay|ok|hello|hi)\s+google)\b',
+      r'\b(?:(?:merhaba|selam|hey|hello|hi|okay|ok|yo|listen|wake\s+up|dear)\s+(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|gervis|travis|service|davis|davies|harvest|jarvi|google)|(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)\s+(?:wake\s+up|please|online)|(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)|(?:hey|okay|ok|hello|hi)\s+google)\b',
       caseSensitive: false,
     );
 
@@ -370,7 +370,9 @@ class JarvisService extends ChangeNotifier {
     if (before.isNotEmpty) {
       final lowerBefore = before.toLowerCase();
       // If "before" was just a greeting prefix (e.g. "Hey" from "Hey, Jarvis"), return empty string so it wakes up
-      if (lowerBefore == 'hey' ||
+      if (lowerBefore == 'merhaba' ||
+          lowerBefore == 'selam' ||
+          lowerBefore == 'hey' ||
           lowerBefore == 'hello' ||
           lowerBefore == 'hi' ||
           lowerBefore == 'ok' ||
@@ -411,7 +413,7 @@ class JarvisService extends ChangeNotifier {
     startListening();
     // Arm mid-air proximity sensor for zero-touch gestures while in JARVIS mode
     unawaited(AirGestureService.instance.start());
-    _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+    _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
     notifyListeners();
   }
 
@@ -439,9 +441,9 @@ class JarvisService extends ChangeNotifier {
       _wakeUp();
       ensureAlwaysOnRunning();
       const msg =
-          'Always-On continuous listening active, sir. Say "Hey Jarvis" anytime.';
+          'Sürekli dinleme açık. İstediğiniz zaman "Merhaba Jarvis" diyebilirsiniz.';
       _lastJarvisSpeech = msg;
-      _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
       notifyListeners();
       await _voice.speak(msg);
     } else {
@@ -584,7 +586,7 @@ class JarvisService extends ChangeNotifier {
       _statusMessage = 'LISTENING // AUDIO RECEPTORS ACTIVE';
     } else {
       _phase = JarvisPhase.idle;
-      _statusMessage = 'STANDBY // SAY "HEY JARVIS"';
+      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
     }
     notifyListeners();
 
@@ -648,7 +650,7 @@ class JarvisService extends ChangeNotifier {
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
                     ? 'LISTENING // AUDIO RECEPTORS ACTIVE'
-                    : 'STANDBY // SAY "HEY JARVIS"')
+                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
                 : 'READY // TAP TO TALK';
             notifyListeners();
           }
@@ -785,7 +787,7 @@ class JarvisService extends ChangeNotifier {
     if (_phase == JarvisPhase.listening) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'STANDBY // SAY "HEY JARVIS"'
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
           : 'READY // TAP TO TALK';
       notifyListeners();
     }
@@ -806,7 +808,7 @@ class JarvisService extends ChangeNotifier {
       await _voice.stopSpeaking();
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'STANDBY // SAY "HEY JARVIS"'
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
           : 'READY // TAP TO TALK';
       notifyListeners();
     }
@@ -856,7 +858,7 @@ class JarvisService extends ChangeNotifier {
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
-          ? 'STANDBY // SAY "HEY JARVIS"'
+          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
           : 'READY // TAP TO TALK';
       notifyListeners();
       await _voice.speak(reply);
