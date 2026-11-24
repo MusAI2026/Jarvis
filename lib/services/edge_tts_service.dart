@@ -560,7 +560,7 @@ class EdgeTtsService {
           .replaceAll("'", '&apos;');
 
       final ssml =
-          "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='$selectedVoice'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>$escapedText</prosody></voice></speak>";
+          "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${selectedVoice.split('-').take(2).join('-')}'><voice name='$selectedVoice'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>$escapedText</prosody></voice></speak>";
 
       final ssmlMsg = 'X-RequestId:$reqId\r\n'
           'Content-Type:application/ssml+xml\r\n'
