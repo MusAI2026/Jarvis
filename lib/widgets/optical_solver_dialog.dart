@@ -81,7 +81,7 @@ class _OpticalSolverDialogState extends State<OpticalSolverDialog>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'OPTICAL HUD SOLVER',
+                              'OPTİK EKRAN ÇÖZÜMLEYİCİSİ',
                               style: TextStyle(
                                 color: gold,
                                 fontFamily: 'monospace',
@@ -91,7 +91,7 @@ class _OpticalSolverDialogState extends State<OpticalSolverDialog>
                               ),
                             ),
                             Text(
-                              'POINT & SOLVE LIVE AR MATRIX',
+                              'KAMERAYI YÖNELT VE ÇÖZ',
                               style: TextStyle(
                                 color: Colors.white54,
                                 fontFamily: 'monospace',
@@ -115,11 +115,11 @@ class _OpticalSolverDialogState extends State<OpticalSolverDialog>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _modeChip(OpticalSolveMode.auto, 'Auto'),
-                      _modeChip(OpticalSolveMode.math, 'Math'),
-                      _modeChip(OpticalSolveMode.codeDebug, 'Code'),
-                      _modeChip(OpticalSolveMode.billSplit, 'Bill'),
-                      _modeChip(OpticalSolveMode.circuit, 'Circuit'),
+                      _modeChip(OpticalSolveMode.auto, 'Otomatik'),
+                      _modeChip(OpticalSolveMode.math, 'Matematik'),
+                      _modeChip(OpticalSolveMode.codeDebug, 'Kod'),
+                      _modeChip(OpticalSolveMode.billSplit, 'Hesap'),
+                      _modeChip(OpticalSolveMode.circuit, 'Devre'),
                     ],
                   ),
 
@@ -178,7 +178,7 @@ class _OpticalSolverDialogState extends State<OpticalSolverDialog>
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                isSolving ? 'ANALYZING PHYSICAL TARGET...' : 'AIM CAMERA AT SUBJECT & SOLVE',
+                                isSolving ? 'HEDEF İNCELENİYOR...' : 'KAMERAYI HEDEFE YÖNELT VE ÇÖZ',
                                 style: TextStyle(
                                   color: isSolving ? gold : Colors.white38,
                                   fontFamily: 'monospace',
@@ -200,7 +200,7 @@ class _OpticalSolverDialogState extends State<OpticalSolverDialog>
                     child: result == null
                         ? Center(
                             child: Text(
-                              'Tap "POINT & SOLVE" to resolve math formulas, screen stack traces, restaurant split bills, or electronics in real time.',
+                              'Matematik formüllerini, hata kayıtlarını, restoran hesaplarını ve elektronik parçaları çözümlemek için "YÖNELT VE ÇÖZ" seçeneğine dokun.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: Colors.white38,
@@ -304,7 +304,7 @@ class _OpticalSolverDialogState extends State<OpticalSolverDialog>
                             },
                       icon: const Icon(Icons.flash_on, size: 18),
                       label: Text(
-                        isSolving ? 'COMPUTING RESOLUTION...' : 'POINT & SOLVE',
+                        isSolving ? 'ÇÖZÜM HESAPLANIYOR...' : 'YÖNELT VE ÇÖZ',
                         style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 12,
