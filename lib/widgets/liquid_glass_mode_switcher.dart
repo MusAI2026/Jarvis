@@ -71,7 +71,7 @@ class LiquidGlassModeSwitcher extends StatelessWidget {
                       child: _modeItem(
                         context: context,
                         mode: AppMode.agent,
-                        label: 'Agent',
+                        label: 'Asistan',
                         icon: Icons.smart_toy_rounded,
                         activeColor: const Color(0xFF818CF8),
                         glowColor: const Color(0xFF6366F1),
@@ -82,7 +82,7 @@ class LiquidGlassModeSwitcher extends StatelessWidget {
                       child: _modeItem(
                         context: context,
                         mode: AppMode.chat,
-                        label: 'Chat',
+                        label: 'Sohbet',
                         icon: Icons.chat_bubble_rounded,
                         activeColor: const Color(0xFF38BDF8),
                         glowColor: const Color(0xFF0EA5E9),
