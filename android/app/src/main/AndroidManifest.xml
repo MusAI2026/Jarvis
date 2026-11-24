@@ -47,7 +47,7 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
     <application
-        android:label="JARVIS TR"
+        android:label="MAX"
         android:name="${applicationName}"
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true"
@@ -74,7 +74,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- PrivateAgent accessibility service: reads screen hierarchy and
+        <!-- MAX accessibility service: reads screen hierarchy and
              performs gestures (tap, swipe, scroll, type) on behalf of the user. -->
         <service
             android:name=".AgentAccessibilityService"
@@ -96,13 +96,13 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Shows the PrivateAgent floating control bubble and transcript panel on top of other apps while the agent performs UI automation." />
+                android:value="Shows the MAX floating control bubble and transcript panel on top of other apps while the agent performs UI automation." />
         </service>
 
         <!-- Notification Listener for live email & SMS inbox triage -->
         <service
             android:name=".InboxNotificationListenerService"
-            android:label="JARVIS E-posta ve SMS Dinleyicisi"
+            android:label="MAX E-posta ve SMS Dinleyicisi"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
@@ -110,7 +110,7 @@
             </intent-filter>
         </service>
 
-        <!-- FileProvider for Jarvis Eye camera snapshot captures -->
+        <!-- FileProvider for MAX Eye camera snapshot captures -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -142,7 +142,7 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
-        <!-- Camera intent for Jarvis Eye optical scanner -->
+        <!-- Camera intent for MAX Eye optical scanner -->
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
         </intent>

@@ -58,7 +58,7 @@ import 'vision_perception_service.dart';
 import 'voice_service.dart';
 import 'workflow_service.dart';
 
-/// Active operational phase of JARVIS.
+/// Active operational phase of MAX.
 enum JarvisPhase {
   idle, // Standby, listening for wake word or prompt
   listening, // Actively recording user speech
@@ -67,8 +67,8 @@ enum JarvisPhase {
   speaking, // Vocalizing audio reply via TTS
 }
 
-/// Central controller for JARVIS Mode:
-/// - Always-On hands-free voice assistant with Wake Words ("Hey Jarvis", "Hello Jarvis", "Jarvis")
+/// Central controller for MAX Mode:
+/// - Always-On hands-free voice assistant with Wake Words ("Hey MAX", "Hello MAX", "MAX")
 /// - Ignores ambient room chatter in standby until wake word is recognized
 /// - Active conversational continuation window for hands-free follow-up queries
 /// - Hermes Self-Evolving Workflow Engine integration (Study, Night, Work, Cinema)
@@ -93,10 +93,10 @@ class JarvisService extends ChangeNotifier {
   String _lastUserSpeech = '';
   String get lastUserSpeech => _lastUserSpeech;
 
-  String _lastJarvisSpeech = 'Hizmetinizdeyim. İstediğiniz zaman "Merhaba Jarvis" diyebilirsiniz.';
+  String _lastJarvisSpeech = 'Hizmetinizdeyim. İstediğiniz zaman "Merhaba MAX" diyebilirsiniz.';
   String get lastJarvisSpeech => _lastJarvisSpeech;
 
-  String _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+  String _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
   String get statusMessage => _statusMessage;
 
   String? _currentTaskGoal;
@@ -246,7 +246,7 @@ class JarvisService extends ChangeNotifier {
       if (_phase != JarvisPhase.executing) {
         _isAwake = false;
         _statusMessage = _shouldListenContinuously
-            ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+            ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
             : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
         notifyListeners();
       }
@@ -263,7 +263,7 @@ class JarvisService extends ChangeNotifier {
     _awakeTimer?.cancel();
     _lastUserSpeech = '';
     _statusMessage = _shouldListenContinuously
-        ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+        ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
         : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
     _phase = JarvisPhase.idle;
     notifyListeners();
@@ -312,8 +312,8 @@ class JarvisService extends ChangeNotifier {
   }
 
   /// Extracts the wake word command from speech with robust normalization.
-  /// Supports J.A.R.V.I.S., phonetic variants, and Google Assistant wake phrases.
-  /// Handles punctuation (commas like "Hey, Jarvis"), accents, and alternate STT hypotheses.
+  /// Supports MAX, phonetic variants, and Google Assistant wake phrases.
+  /// Handles punctuation (commas like "Hey, MAX"), accents, and alternate STT hypotheses.
   /// Returns:
   /// - '' (empty string) if only wake word / greeting was spoken (to wake up and start listening)
   /// - the extracted user command if wake word + command was spoken
@@ -340,20 +340,20 @@ class JarvisService extends ChangeNotifier {
     // - standalone (jarvis | javis | jervis | jarves | jarvice | charvis | garvis | jarvi)
     // - (wake up jarvis | jarvis wake up | jarvis please)
     final wakePattern = RegExp(
-      r'\b(?:(?:merhaba|selam|hey|hello|hi|okay|ok|yo|listen|wake\s+up|dear)\s+(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|gervis|travis|service|davis|davies|harvest|jarvi|google)|(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)\s+(?:wake\s+up|please|online)|(?:jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)|(?:hey|okay|ok|hello|hi)\s+google)\b',
+      r'\b(?:(?:merhaba|selam|hey|hello|hi|okay|ok|yo|listen|wake\s+up|dear)\s+(?:max|maks|jarvis|javis|jervis|jarves|jarvice|charvis|garvis|gervis|travis|service|davis|davies|harvest|jarvi|google)|(?:max|maks|jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)\s+(?:wake\s+up|please|online)|(?:max|maks|jarvis|javis|jervis|jarves|jarvice|charvis|garvis|jarvi)|(?:hey|okay|ok|hello|hi)\s+google)\b',
       caseSensitive: false,
     );
 
     final match = wakePattern.firstMatch(normalized);
     if (match == null) return null;
 
-    // Command after wake word: e.g. "Hey Jarvis, what time is it" -> "what time is it"
+    // Command after wake word: e.g. "Hey MAX, what time is it" -> "what time is it"
     final after = normalized
         .substring(match.end)
         .replaceAll(RegExp(r'^[,\s!?\-:;]+'), '')
         .trim();
 
-    // Command before wake word: e.g. "What time is it, Jarvis" -> "What time is it"
+    // Command before wake word: e.g. "What time is it, MAX" -> "What time is it"
     final before = normalized
         .substring(0, match.start)
         .replaceAll(RegExp(r'[,\s!?\-:;]+$'), '')
@@ -369,7 +369,7 @@ class JarvisService extends ChangeNotifier {
 
     if (before.isNotEmpty) {
       final lowerBefore = before.toLowerCase();
-      // If "before" was just a greeting prefix (e.g. "Hey" from "Hey, Jarvis"), return empty string so it wakes up
+      // If "before" was just a greeting prefix (e.g. "Hey" from "Hey, MAX"), return empty string so it wakes up
       if (lowerBefore == 'merhaba' ||
           lowerBefore == 'selam' ||
           lowerBefore == 'hey' ||
@@ -384,7 +384,7 @@ class JarvisService extends ChangeNotifier {
       return before;
     }
 
-    // Only wake word was spoken: e.g. "Hey Jarvis" or "Jarvis"
+    // Only wake word was spoken: e.g. "Hey MAX" or "MAX"
     return '';
   }
 
@@ -406,18 +406,18 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
-  /// Called when user navigates into JARVIS mode.
+  /// Called when user navigates into MAX mode.
   void onEnterJarvisMode() {
     _isInJarvisMode = true;
     _standDown();
     startListening();
-    // Arm mid-air proximity sensor for zero-touch gestures while in JARVIS mode
+    // Arm mid-air proximity sensor for zero-touch gestures while in MAX mode
     unawaited(AirGestureService.instance.start());
-    _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+    _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
     notifyListeners();
   }
 
-  /// Called when user leaves JARVIS mode to prevent background audio captures.
+  /// Called when user leaves MAX mode to prevent background audio captures.
   void onExitJarvisMode() {
     _isInJarvisMode = false;
     unawaited(AirGestureService.instance.stop());
@@ -441,9 +441,9 @@ class JarvisService extends ChangeNotifier {
       _wakeUp();
       ensureAlwaysOnRunning();
       const msg =
-          'Sürekli dinleme açık. İstediğiniz zaman "Merhaba Jarvis" diyebilirsiniz.';
+          'Sürekli dinleme açık. İstediğiniz zaman "Merhaba MAX" diyebilirsiniz.';
       _lastJarvisSpeech = msg;
-      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+      _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
       notifyListeners();
       await _voice.speak(msg);
     } else {
@@ -459,7 +459,7 @@ class JarvisService extends ChangeNotifier {
   /// Session guard to ensure rich executive greeting is spoken once per session upon launch
   bool _hasGreetedThisSession = false;
 
-  /// Initial vocal greeting when user enters JARVIS mode.
+  /// Initial vocal greeting when user enters MAX mode.
   /// Dynamically synthesizes date, time, calendar meetings (e.g. Jack), and pending to-dos.
   Future<void> speakGreeting({bool force = false}) async {
     if (!force && _hasGreetedThisSession) return;
@@ -482,7 +482,7 @@ class JarvisService extends ChangeNotifier {
 
   /// Autonomously speaks a proactive question and opens a hands-free confirmation listening window.
   Future<void> proactivelySpeakAndAwaitConfirmation(ProactiveSuggestion suggestion) async {
-    // If Jarvis is currently busy in execution, do not interrupt
+    // If MAX is currently busy in execution, do not interrupt
     if (_phase == JarvisPhase.executing) return;
 
     _proactiveConfirmationTimer?.cancel();
@@ -586,7 +586,7 @@ class JarvisService extends ChangeNotifier {
       _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
     } else {
       _phase = JarvisPhase.idle;
-      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+      _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
     }
     notifyListeners();
 
@@ -650,7 +650,7 @@ class JarvisService extends ChangeNotifier {
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
                     ? 'DİNLİYOR // MİKROFON AÇIK'
-                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                    : 'BEKLEMEDE // "MERHABA MAX" DEYİN')
                 : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
             notifyListeners();
           }
@@ -687,7 +687,7 @@ class JarvisService extends ChangeNotifier {
     debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
 
     // Proactive conversational confirmation check:
-    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // If MAX just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
     // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
     if (_pendingProactiveSuggestion != null) {
       final suggestion = _pendingProactiveSuggestion!;
@@ -733,7 +733,7 @@ class JarvisService extends ChangeNotifier {
       return;
     }
 
-    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    // 2. Continuous listening is active (MAX HUD or Always-On): Check for wake word across speech and candidates
     var wakeCommand = _extractWakeCommand(trimmed);
     if (wakeCommand == null && candidates != null) {
       for (final cand in candidates) {
@@ -751,20 +751,20 @@ class JarvisService extends ChangeNotifier {
       HapticFeedback.mediumImpact();
 
       if (wakeCommand.isEmpty) {
-        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        // User said ONLY "Hey MAX" or "MAX" -> Stay in LISTENING state waiting for command
         _wakeUp();
         _phase = JarvisPhase.listening;
         _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
         notifyListeners();
         return;
       } else {
-        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        // User said "Hey MAX [command]" e.g. "Hey MAX, what are today to new headlines"
         await processCommand(wakeCommand);
         return;
       }
     }
 
-    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // 3. User is already awake (from previous "Hey MAX" greeting or manual screen tap):
     // Execute direct follow-up commands!
     if (_isAwake) {
       await processCommand(trimmed);
@@ -787,7 +787,7 @@ class JarvisService extends ChangeNotifier {
     if (_phase == JarvisPhase.listening) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
@@ -808,13 +808,13 @@ class JarvisService extends ChangeNotifier {
       await _voice.stopSpeaking();
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
   }
 
-  /// Processes a voice command through JARVIS intelligence.
+  /// Processes a voice command through MAX intelligence.
   Future<void> processCommand(String command) async {
     _wakeUp();
 
@@ -865,7 +865,7 @@ class JarvisService extends ChangeNotifier {
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(reply);
@@ -1002,9 +1002,9 @@ class JarvisService extends ChangeNotifier {
 
     if (lower.startsWith('record macro ') ||
         lower.startsWith('start recording ') ||
-        lower.startsWith('teach jarvis ')) {
+        (lower.startsWith('teach jarvis ') || lower.startsWith('teach max '))) {
       final macroGoal = trimmed
-          .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
+          .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+(?:jarvis|max))\s+', caseSensitive: false), '')
           .trim();
       await MacroRecorderService.instance.startRecording(macroGoal.isNotEmpty ? macroGoal : 'Custom Task');
       final reply = 'Macro recording engaged for "${macroGoal.isNotEmpty ? macroGoal : 'Custom Task'}", sir. Demonstrate the actions on your screen and say "save macro" when finished.';
@@ -1041,7 +1041,7 @@ class JarvisService extends ChangeNotifier {
       return;
     }
 
-    // 3c. Jarvis Eye Optical Perception fast trigger
+    // 3c. MAX Eye Optical Perception fast trigger
     if (lower.contains('look at this') ||
         lower.contains('what is this') ||
         lower.contains('scan this') ||
@@ -1642,7 +1642,7 @@ Verse 1:
 Neon pulses through the titanium frame,
 Silent watchers in the midnight game.
 Through circuits of silver and rivers of light,
-J.A.R.V.I.S. awakens and commands the night.
+MAX awakens and commands the night.
 
 Chorus:
 Arc reactor burning bright,
@@ -1651,7 +1651,7 @@ Beyond the limits of the mortal code,
 Mastering the boundless road.
 ''';
       } else {
-        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+        content = 'Created by MAX on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
       }
 
       final res = await PhoneStorageService.instance.createFile(
@@ -2631,7 +2631,7 @@ Mastering the boundless road.
         final isScreen = trimmed.toLowerCase().contains('screen');
         final ack = isScreen
             ? 'Scanning active screen elements, sir.'
-            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+            : 'MAX Eye optical sensors engaged, sir. Inspecting the subject now.';
         _lastJarvisSpeech = ack;
         _phase = JarvisPhase.speaking;
         _statusMessage = 'OPTICAL SENSORS ACTIVE';
@@ -3068,7 +3068,7 @@ Mastering the boundless road.
       _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
     } else {
       _phase = JarvisPhase.idle;
-      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+      _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
     }
     notifyListeners();
 
@@ -3132,7 +3132,7 @@ Mastering the boundless road.
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
                     ? 'DİNLİYOR // MİKROFON AÇIK'
-                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                    : 'BEKLEMEDE // "MERHABA MAX" DEYİN')
                 : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
             notifyListeners();
           }
@@ -3169,7 +3169,7 @@ Mastering the boundless road.
     debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
 
     // Proactive conversational confirmation check:
-    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // If MAX just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
     // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
     if (_pendingProactiveSuggestion != null) {
       final suggestion = _pendingProactiveSuggestion!;
@@ -3215,7 +3215,7 @@ Mastering the boundless road.
       return;
     }
 
-    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    // 2. Continuous listening is active (MAX HUD or Always-On): Check for wake word across speech and candidates
     var wakeCommand = _extractWakeCommand(trimmed);
     if (wakeCommand == null && candidates != null) {
       for (final cand in candidates) {
@@ -3233,20 +3233,20 @@ Mastering the boundless road.
       HapticFeedback.mediumImpact();
 
       if (wakeCommand.isEmpty) {
-        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        // User said ONLY "Hey MAX" or "MAX" -> Stay in LISTENING state waiting for command
         _wakeUp();
         _phase = JarvisPhase.listening;
         _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
         notifyListeners();
         return;
       } else {
-        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        // User said "Hey MAX [command]" e.g. "Hey MAX, what are today to new headlines"
         await processCommand(wakeCommand);
         return;
       }
     }
 
-    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // 3. User is already awake (from previous "Hey MAX" greeting or manual screen tap):
     // Execute direct follow-up commands!
     if (_isAwake) {
       await processCommand(trimmed);
@@ -3269,7 +3269,7 @@ Mastering the boundless road.
     if (_phase == JarvisPhase.listening) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
@@ -3290,13 +3290,13 @@ Mastering the boundless road.
       await _voice.stopSpeaking();
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
   }
 
-  /// Processes a voice command through JARVIS intelligence.
+  /// Processes a voice command through MAX intelligence.
   Future<void> processCommand(String command) async {
     _wakeUp();
 
@@ -3347,7 +3347,7 @@ Mastering the boundless road.
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(reply);
@@ -3480,7 +3480,7 @@ Mastering the boundless road.
 
     if (lower.startsWith('record macro ') ||
         lower.startsWith('start recording ') ||
-        lower.startsWith('teach jarvis ')) {
+        (lower.startsWith('teach jarvis ') || lower.startsWith('teach max '))) {
       final macroGoal = trimmed
           .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
           .trim();
@@ -3519,7 +3519,7 @@ Mastering the boundless road.
       return;
     }
 
-    // 3c. Jarvis Eye Optical Perception fast trigger
+    // 3c. MAX Eye Optical Perception fast trigger
     if (lower.contains('look at this') ||
         lower.contains('what is this') ||
         lower.contains('scan this') ||
@@ -4120,7 +4120,7 @@ Verse 1:
 Neon pulses through the titanium frame,
 Silent watchers in the midnight game.
 Through circuits of silver and rivers of light,
-J.A.R.V.I.S. awakens and commands the night.
+MAX awakens and commands the night.
 
 Chorus:
 Arc reactor burning bright,
@@ -4129,7 +4129,7 @@ Beyond the limits of the mortal code,
 Mastering the boundless road.
 ''';
       } else {
-        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+        content = 'Created by MAX on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
       }
 
       final res = await PhoneStorageService.instance.createFile(
@@ -5104,7 +5104,7 @@ Mastering the boundless road.
         final isScreen = trimmed.toLowerCase().contains('screen');
         final ack = isScreen
             ? 'Scanning active screen elements, sir.'
-            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+            : 'MAX Eye optical sensors engaged, sir. Inspecting the subject now.';
         _lastJarvisSpeech = ack;
         _phase = JarvisPhase.speaking;
         _statusMessage = 'OPTICAL SENSORS ACTIVE';
@@ -5529,7 +5529,7 @@ Mastering the boundless road.
       _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
     } else {
       _phase = JarvisPhase.idle;
-      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+      _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
     }
     notifyListeners();
 
@@ -5593,7 +5593,7 @@ Mastering the boundless road.
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
                     ? 'DİNLİYOR // MİKROFON AÇIK'
-                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                    : 'BEKLEMEDE // "MERHABA MAX" DEYİN')
                 : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
             notifyListeners();
           }
@@ -5630,7 +5630,7 @@ Mastering the boundless road.
     debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
 
     // Proactive conversational confirmation check:
-    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // If MAX just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
     // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
     if (_pendingProactiveSuggestion != null) {
       final suggestion = _pendingProactiveSuggestion!;
@@ -5676,7 +5676,7 @@ Mastering the boundless road.
       return;
     }
 
-    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    // 2. Continuous listening is active (MAX HUD or Always-On): Check for wake word across speech and candidates
     var wakeCommand = _extractWakeCommand(trimmed);
     if (wakeCommand == null && candidates != null) {
       for (final cand in candidates) {
@@ -5694,20 +5694,20 @@ Mastering the boundless road.
       HapticFeedback.mediumImpact();
 
       if (wakeCommand.isEmpty) {
-        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        // User said ONLY "Hey MAX" or "MAX" -> Stay in LISTENING state waiting for command
         _wakeUp();
         _phase = JarvisPhase.listening;
         _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
         notifyListeners();
         return;
       } else {
-        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        // User said "Hey MAX [command]" e.g. "Hey MAX, what are today to new headlines"
         await processCommand(wakeCommand);
         return;
       }
     }
 
-    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // 3. User is already awake (from previous "Hey MAX" greeting or manual screen tap):
     // Execute direct follow-up commands!
     if (_isAwake) {
       await processCommand(trimmed);
@@ -5730,7 +5730,7 @@ Mastering the boundless road.
     if (_phase == JarvisPhase.listening) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
@@ -5751,13 +5751,13 @@ Mastering the boundless road.
       await _voice.stopSpeaking();
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
   }
 
-  /// Processes a voice command through JARVIS intelligence.
+  /// Processes a voice command through MAX intelligence.
   Future<void> processCommand(String command) async {
     _wakeUp();
 
@@ -5808,7 +5808,7 @@ Mastering the boundless road.
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(reply);
@@ -5941,7 +5941,7 @@ Mastering the boundless road.
 
     if (lower.startsWith('record macro ') ||
         lower.startsWith('start recording ') ||
-        lower.startsWith('teach jarvis ')) {
+        (lower.startsWith('teach jarvis ') || lower.startsWith('teach max '))) {
       final macroGoal = trimmed
           .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
           .trim();
@@ -5980,7 +5980,7 @@ Mastering the boundless road.
       return;
     }
 
-    // 3c. Jarvis Eye Optical Perception fast trigger
+    // 3c. MAX Eye Optical Perception fast trigger
     if (lower.contains('look at this') ||
         lower.contains('what is this') ||
         lower.contains('scan this') ||
@@ -6581,7 +6581,7 @@ Verse 1:
 Neon pulses through the titanium frame,
 Silent watchers in the midnight game.
 Through circuits of silver and rivers of light,
-J.A.R.V.I.S. awakens and commands the night.
+MAX awakens and commands the night.
 
 Chorus:
 Arc reactor burning bright,
@@ -6590,7 +6590,7 @@ Beyond the limits of the mortal code,
 Mastering the boundless road.
 ''';
       } else {
-        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+        content = 'Created by MAX on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
       }
 
       final res = await PhoneStorageService.instance.createFile(
@@ -7565,7 +7565,7 @@ Mastering the boundless road.
         final isScreen = trimmed.toLowerCase().contains('screen');
         final ack = isScreen
             ? 'Scanning active screen elements, sir.'
-            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+            : 'MAX Eye optical sensors engaged, sir. Inspecting the subject now.';
         _lastJarvisSpeech = ack;
         _phase = JarvisPhase.speaking;
         _statusMessage = 'OPTICAL SENSORS ACTIVE';
@@ -8002,7 +8002,7 @@ Mastering the boundless road.
       _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
     } else {
       _phase = JarvisPhase.idle;
-      _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+      _statusMessage = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
     }
     notifyListeners();
 
@@ -8066,7 +8066,7 @@ Mastering the boundless road.
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
                     ? 'DİNLİYOR // MİKROFON AÇIK'
-                    : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
+                    : 'BEKLEMEDE // "MERHABA MAX" DEYİN')
                 : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
             notifyListeners();
           }
@@ -8103,7 +8103,7 @@ Mastering the boundless road.
     debugPrint('[JarvisService] _handleSpeechResult: "$trimmed" (candidates: $candidates, isAwake: $_isAwake)');
 
     // Proactive conversational confirmation check:
-    // If Jarvis just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
+    // If MAX just asked a proactive question (e.g. "It's night time, sir. Should I turn on the night mode?"),
     // interpret the user's natural answer ("yes", "sure", "no", "later") immediately without requiring a wake word.
     if (_pendingProactiveSuggestion != null) {
       final suggestion = _pendingProactiveSuggestion!;
@@ -8149,7 +8149,7 @@ Mastering the boundless road.
       return;
     }
 
-    // 2. Continuous listening is active (Jarvis HUD or Always-On): Check for wake word across speech and candidates
+    // 2. Continuous listening is active (MAX HUD or Always-On): Check for wake word across speech and candidates
     var wakeCommand = _extractWakeCommand(trimmed);
     if (wakeCommand == null && candidates != null) {
       for (final cand in candidates) {
@@ -8167,20 +8167,20 @@ Mastering the boundless road.
       HapticFeedback.mediumImpact();
 
       if (wakeCommand.isEmpty) {
-        // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
+        // User said ONLY "Hey MAX" or "MAX" -> Stay in LISTENING state waiting for command
         _wakeUp();
         _phase = JarvisPhase.listening;
         _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
         notifyListeners();
         return;
       } else {
-        // User said "Hey Jarvis [command]" e.g. "Hey Jarvis, what are today to new headlines"
+        // User said "Hey MAX [command]" e.g. "Hey MAX, what are today to new headlines"
         await processCommand(wakeCommand);
         return;
       }
     }
 
-    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // 3. User is already awake (from previous "Hey MAX" greeting or manual screen tap):
     // Execute direct follow-up commands!
     if (_isAwake) {
       await processCommand(trimmed);
@@ -8203,7 +8203,7 @@ Mastering the boundless road.
     if (_phase == JarvisPhase.listening) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
@@ -8224,13 +8224,13 @@ Mastering the boundless road.
       await _voice.stopSpeaking();
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
   }
 
-  /// Processes a voice command through JARVIS intelligence.
+  /// Processes a voice command through MAX intelligence.
   Future<void> processCommand(String command) async {
     _wakeUp();
 
@@ -8281,7 +8281,7 @@ Mastering the boundless road.
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
-          ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
+          ? 'BEKLEMEDE // "MERHABA MAX" DEYİN'
           : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(reply);
@@ -8414,7 +8414,7 @@ Mastering the boundless road.
 
     if (lower.startsWith('record macro ') ||
         lower.startsWith('start recording ') ||
-        lower.startsWith('teach jarvis ')) {
+        (lower.startsWith('teach jarvis ') || lower.startsWith('teach max '))) {
       final macroGoal = trimmed
           .replaceFirst(RegExp(r'^(record\s+macro|start\s+recording|teach\s+jarvis)\s+', caseSensitive: false), '')
           .trim();
@@ -8453,7 +8453,7 @@ Mastering the boundless road.
       return;
     }
 
-    // 3c. Jarvis Eye Optical Perception fast trigger
+    // 3c. MAX Eye Optical Perception fast trigger
     if (lower.contains('look at this') ||
         lower.contains('what is this') ||
         lower.contains('scan this') ||
@@ -9054,7 +9054,7 @@ Verse 1:
 Neon pulses through the titanium frame,
 Silent watchers in the midnight game.
 Through circuits of silver and rivers of light,
-J.A.R.V.I.S. awakens and commands the night.
+MAX awakens and commands the night.
 
 Chorus:
 Arc reactor burning bright,
@@ -9063,7 +9063,7 @@ Beyond the limits of the mortal code,
 Mastering the boundless road.
 ''';
       } else {
-        content = 'Created by J.A.R.V.I.S. on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
+        content = 'Created by MAX on ${DateTime.now().toIso8601String()}\nRequest: $trimmed\nStatus: Complete.';
       }
 
       final res = await PhoneStorageService.instance.createFile(
@@ -10038,7 +10038,7 @@ Mastering the boundless road.
         final isScreen = trimmed.toLowerCase().contains('screen');
         final ack = isScreen
             ? 'Scanning active screen elements, sir.'
-            : 'Jarvis Eye optical sensors engaged, sir. Inspecting the subject now.';
+            : 'MAX Eye optical sensors engaged, sir. Inspecting the subject now.';
         _lastJarvisSpeech = ack;
         _phase = JarvisPhase.speaking;
         _statusMessage = 'OPTICAL SENSORS ACTIVE';

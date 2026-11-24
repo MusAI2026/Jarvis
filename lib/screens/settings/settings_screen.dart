@@ -254,7 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 _sectionHeader(
                   icon: Icons.shield_rounded,
-                  title: 'Otonom J.A.R.V.I.S. çekirdeği',
+                  title: 'Otonom MAX çekirdeği',
                   color: const Color(0xFF00E5FF),
                 ),
                 _jarvisCard(),
@@ -510,7 +510,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         Row(
                           children: [
                             const Text(
-                              'J.A.R.V.I.S.',
+                              'MAX',
                               style: TextStyle(
                                 fontSize: 16.5,
                                 fontWeight: FontWeight.w900,

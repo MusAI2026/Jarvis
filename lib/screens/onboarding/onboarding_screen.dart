@@ -177,10 +177,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.shield_outlined,
-      title: 'J.A.R.V.I.S. ile tanışın',
+      title: 'MAX ile tanışın',
       subtitle: 'Yeni nesil Stark yapay zekâ asistanınız ve telefon yardımcınız. '
           'Sesli etkileşim, temassız el hareketleri, canlı şarj verileri, '
-          'and autonomous device automation.',
+          've otonom cihaz kontrolü.',
       children: [
         _featureRow(
           theme,
@@ -276,7 +276,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       theme,
       icon: Icons.accessibility_new_outlined,
       title: 'Ekran kontrolünü etkinleştir',
-      subtitle: 'JARVIS, Android erişilebilirlik hizmetini kullanır. '
+      subtitle: 'MAX, Android erişilebilirlik hizmetini kullanır. '
           'Böylece ekranı okuyabilir ve sizin için düğmelere dokunabilir.',
       children: [
         Card(
@@ -295,8 +295,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 Expanded(
                   child: Text(
                     _serviceEnabled
-                        ? 'JARVIS ekran kontrolü açık'
-                        : 'JARVIS ekran kontrolü kapalı',
+                        ? 'MAX ekran kontrolü açık'
+                        : 'MAX ekran kontrolü kapalı',
                     style: theme.textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
@@ -325,7 +325,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         const SizedBox(height: 16),
         Text(
           'On Android 13 and newer you may need to open App Info → ⋮ menu → '
-          '"Allow restricted settings" first, then enable "PrivateAgent '
+          '"Allow restricted settings" first, then enable "MAX '
           'Screen Control" under Accessibility → Downloaded apps.',
           style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant, height: 1.5),
@@ -394,7 +394,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       theme,
       icon: Icons.verified_user_outlined,
       title: 'İsteğe bağlı izinler',
-      subtitle: 'These unlock voice commands, the floating bubble, '
+      subtitle: 'Bu izinler sesli komutları, yüzen asistanı '
           'notifications and contact search. Skip anything you don\'t need.',
       children: [
         _permissionTile(

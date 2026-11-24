@@ -11,7 +11,7 @@ import '../services/settings_service.dart';
 import 'air_gestures_hud_widget.dart';
 import 'brain_dump_dialog.dart';
 
-/// Next-Generation Stark Industries J.A.R.V.I.S. 3D Hologram Consciousness Core.
+/// Next-Generation Stark Industries MAX 3D Hologram Consciousness Core.
 ///
 /// Features:
 /// - Movie-accurate floating 3D spherical AI consciousness matrix from Iron Man / Avengers (jarvi.jpg).
@@ -597,7 +597,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                             ),
                             const SizedBox(width: 8),
 
-                            // 5. Screen Style (Jarvis vs Arc)
+                            // 5. Screen Style (MAX vs Arc)
                             ListenableBuilder(
                               listenable: SettingsService.instance,
                               builder: (context, _) {
@@ -631,7 +631,7 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                         ),
                                         const SizedBox(width: 5),
                                         Text(
-                                          isArc ? 'ARC' : 'JARVIS',
+                                          isArc ? 'ARC' : 'MAX',
                                           style: TextStyle(
                                             color: podColor,
                                             fontSize: 9.5,

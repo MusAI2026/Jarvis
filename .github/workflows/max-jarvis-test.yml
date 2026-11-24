@@ -1,0 +1,33 @@
+name: MAX JARVIS Test APK
+on:
+  push:
+    branches: [max-jarvis-test]
+  workflow_dispatch:
+concurrency:
+  group: max-jarvis-test-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter --version
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - run: cp build/app/outputs/flutter-apk/app-release.apk MAX-JARVIS-TEST.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MAX-JARVIS-TEST-APK
+          path: MAX-JARVIS-TEST.apk
+          if-no-files-found: error

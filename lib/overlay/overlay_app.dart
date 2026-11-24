@@ -38,9 +38,9 @@ class _OverlayAppState extends State<OverlayApp>
 
   bool _expanded = false;
 
-  // JARVIS Real-Time Phase State
+  // MAX Real-Time Phase State
   String _jarvisPhase = 'idle'; // 'idle', 'listening', 'thinking', 'speaking', 'executing'
-  String _jarvisStatus = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
+  String _jarvisStatus = 'BEKLEMEDE // "MERHABA MAX" DEYİN';
   String? _screenSummary;
   String _summaryTitle = 'Ekrandaki makalenin özeti';
 
@@ -268,7 +268,7 @@ class _OverlayAppState extends State<OverlayApp>
           child: Row(
             children: [
               const Text(
-                'J.A.R.V.I.S.',
+                'MAX',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 13,

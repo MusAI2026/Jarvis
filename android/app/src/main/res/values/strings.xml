@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">JARVIS TR</string>
-    <string name="accessibility_service_label">JARVIS Ekran Kontrolü</string>
-    <string name="accessibility_service_description">JARVIS, bir görevi otomatikleştirmenizi istediğinizde ekran düzenini okumak ve sizin adınıza dokunmak, kaydırmak ve yazı yazmak için bu hizmeti kullanır. Ekran içeriği, yapılandırdığınız yapay zekâ sağlayıcısına gönderildiği durumlar dışında cihazınızdan çıkmaz. Tüm otomasyonu durdurmak için bu hizmeti istediğiniz zaman devre dışı bırakabilirsiniz.</string>
+    <string name="app_name">MAX</string>
+    <string name="accessibility_service_label">MAX Ekran Kontrolü</string>
+    <string name="accessibility_service_description">MAX, bir görevi otomatikleştirmenizi istediğinizde ekran düzenini okumak ve sizin adınıza dokunmak, kaydırmak ve yazı yazmak için bu hizmeti kullanır. Ekran içeriği, yapılandırdığınız yapay zekâ sağlayıcısına gönderildiği durumlar dışında cihazınızdan çıkmaz. Tüm otomasyonu durdurmak için bu hizmeti istediğiniz zaman devre dışı bırakabilirsiniz.</string>
 </resources>
