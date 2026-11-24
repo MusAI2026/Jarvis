@@ -83,3 +83,10 @@ Tarih: 24 Kasım 2026. Bu kayıt, görüşmede oluşturulan özellik listesidir;
 - Ayrı APK ile test; eski MAX ancak başarılı test ve kullanıcı kararı sonrasında kaldırılacak.
 - Android izinleri, harici servisler ve cihaz kısıtları kontrol edilecek. Kaynak kodda olmayan özellikler hazırmış gibi gösterilmeyecek.
 - 37 numaralı yüzen asistan ayarlardan açılıp kapatılabilecek.
+
+## 4. madde — MAX Türkçe ses seçimi
+
+- Ana asistan ses seçenekleri yalnızca Ahmet (Türkçe erkek) ve Emel (Türkçe kadın) olacak.
+- Ryan, Thomas, Guy, Christopher ve Emily ana ses seçicisinden kaldırılacak. Bunlara özgü kod ve kaynaklar ancak ortak ses motoruna, çevrimdışı ses geçişine, çeviri veya diğer seçili özelliklere zarar vermediği doğrulanırsa yeni MAX çalışma dalından kaldırılacak.
+- Çok dilli çeviri korunacak. Orijinal JARVIS yedeği ve mevcut MAX değiştirilmeyecek.
+- Durum: Kullanıcı kararı kaydedildi; kaynak değişikliği ve APK testi henüz yapılmadı.
