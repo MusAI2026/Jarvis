@@ -226,7 +226,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                   child: _screenStyleOption(
                     theme: theme,
                     title: 'Arc Reactor',
-                    subtitle: '3D Spherical Core & Gyroscope',
+                    subtitle: '3B küresel çekirdek ve jiroskop',
                     icon: Icons.blur_circular_rounded,
                     isSelected: currentStyle == JarvisScreenStyle.arcReactor,
                     onTap: () async {
@@ -240,7 +240,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                   child: _screenStyleOption(
                     theme: theme,
                     title: 'Jarvis',
-                    subtitle: '3D Iron Man Hologram Suit',
+                    subtitle: '3B Iron Man hologramı',
                     icon: Icons.accessibility_new_rounded,
                     isSelected: currentStyle == JarvisScreenStyle.jarvis,
                     onTap: () async {
@@ -343,6 +343,8 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
   // ---------------------------------------------------------------------------
   Widget _voiceCard(ThemeData theme) {
     final neuralVoiceOptions = [
+      ('tr-TR-AhmetNeural', 'Ahmet (Türkçe - erkek)', 'Doğal Türkçe erkek sesi'),
+      ('tr-TR-EmelNeural', 'Emel (Türkçe - kadın)', 'Doğal Türkçe kadın sesi'),
       ('en-GB-RyanNeural', 'Ryan (British Neural - Authentic Jarvis)', 'Paul Bettany style, warm, articulate & human'),
       ('en-GB-ThomasNeural', 'Thomas (British Neural - Conversational)', 'Natural UK cadence and smooth phrasing'),
       ('en-US-GuyNeural', 'Guy (US Neural - Studio Male)', 'Polished, authoritative US broadcaster tone'),
@@ -360,11 +362,11 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text(
-                'Always-On Continuous Listening',
+                'Sürekli dinleme',
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
               ),
               subtitle: const Text(
-                'Desk mode: listens silently in the background, ignores room chatter, and wakes on "Hey Jarvis"',
+                'Masa modu: arka planda sessizce dinler ve "Merhaba Jarvis" ile uyanır',
                 style: TextStyle(fontSize: 12),
               ),
               value: _settings.jarvisAlwaysOn,
@@ -384,11 +386,11 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text(
-                'Ultra-Realistic Studio Neural Voice',
+                'Doğal stüdyo sesi',
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
               ),
               subtitle: const Text(
-                'Broadcast-grade natural human voice synthesis (auto-falls back offline)',
+                'Doğal insan sesi (çevrimdışı sese otomatik geçiş)',
                 style: TextStyle(fontSize: 12),
               ),
               value: _settings.useNeuralVoice,
@@ -400,12 +402,12 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
             const SizedBox(height: 8),
 
             const Text(
-              'Voice Model & Personality',
+              'Ses modeli ve kişilik',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
-              'Select the studio human voice for Jarvis spoken responses.',
+              'JARVIS yanıtları için doğal sesi seçin.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -449,11 +451,11 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                 ),
                 const SizedBox(width: 10),
                 IconButton.filledTonal(
-                  tooltip: 'Test voice',
+                  tooltip: 'Sesi test et',
                   icon: const Icon(Icons.volume_up_rounded, size: 22),
                   onPressed: () async {
                     await VoiceService.instance.speak(
-                      'All systems operational, sir. Standing by for your command.',
+                      'Tüm sistemler çalışıyor efendim. Komutunuzu bekliyorum.',
                     );
                   },
                 ),
@@ -498,17 +500,17 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                 ),
                 ButtonSegment(
                   value: PersonalityArchetype.companion,
-                  label: Text('Friend', style: TextStyle(fontSize: 11)),
+                  label: Text('Arkadaş', style: TextStyle(fontSize: 11)),
                   icon: Icon(Icons.favorite_outline, size: 16),
                 ),
                 ButtonSegment(
                   value: PersonalityArchetype.cyberpunk,
-                  label: Text('Cyber', style: TextStyle(fontSize: 11)),
+                  label: Text('Siber', style: TextStyle(fontSize: 11)),
                   icon: Icon(Icons.terminal, size: 16),
                 ),
                 ButtonSegment(
                   value: PersonalityArchetype.executive,
-                  label: Text('Exec', style: TextStyle(fontSize: 11)),
+                  label: Text('Yönetici', style: TextStyle(fontSize: 11)),
                   icon: Icon(Icons.business_center_outlined, size: 16),
                 ),
               ],
@@ -528,15 +530,15 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
               segments: const [
                 ButtonSegment(
                   value: FormalityLevel.casual,
-                  label: Text('Casual', style: TextStyle(fontSize: 12)),
+                  label: Text('Samimi', style: TextStyle(fontSize: 12)),
                 ),
                 ButtonSegment(
                   value: FormalityLevel.balanced,
-                  label: Text('Balanced', style: TextStyle(fontSize: 12)),
+                  label: Text('Dengeli', style: TextStyle(fontSize: 12)),
                 ),
                 ButtonSegment(
                   value: FormalityLevel.formal,
-                  label: Text('Formal', style: TextStyle(fontSize: 12)),
+                  label: Text('Resmî', style: TextStyle(fontSize: 12)),
                 ),
               ],
               selected: {personality.formality},
@@ -555,15 +557,15 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
               segments: const [
                 ButtonSegment(
                   value: HumorLevel.none,
-                  label: Text('None', style: TextStyle(fontSize: 12)),
+                  label: Text('Yok', style: TextStyle(fontSize: 12)),
                 ),
                 ButtonSegment(
                   value: HumorLevel.subtle,
-                  label: Text('Subtle', style: TextStyle(fontSize: 12)),
+                  label: Text('Hafif', style: TextStyle(fontSize: 12)),
                 ),
                 ButtonSegment(
                   value: HumorLevel.high,
-                  label: Text('High Wit', style: TextStyle(fontSize: 12)),
+                  label: Text('Esprili', style: TextStyle(fontSize: 12)),
                 ),
               ],
               selected: {personality.humor},
@@ -716,7 +718,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                           }
                         },
                         child:
-                            const Text('Test', style: TextStyle(fontSize: 12)),
+                            const Text('Test et', style: TextStyle(fontSize: 12)),
                       ),
                     ],
                   ),
@@ -932,7 +934,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                     minimumSize: Size.zero,
                   ),
                   icon: const Icon(Icons.open_in_new, size: 14),
-                  label: const Text('Toggle', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  label: const Text('Aç/kapat', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                   onPressed: () async {
                     if (await FlutterOverlayWindow.isActive()) {
                       await FlutterOverlayWindow.closeOverlay();
@@ -1038,7 +1040,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
               children: [
                 OutlinedButton.icon(
                   icon: const Icon(Icons.memory, size: 14),
-                  label: const Text('Check Specs', style: TextStyle(fontSize: 11)),
+                  label: const Text('Sistem özellikleri', style: TextStyle(fontSize: 11)),
                   onPressed: () async {
                     final spoken = await SystemDiagnosticsService.instance.getDiagnosticsSpoken();
                     await VoiceService.instance.speak(spoken);
@@ -1051,7 +1053,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.apps, size: 14),
-                  label: const Text('Top Apps', style: TextStyle(fontSize: 11)),
+                  label: const Text('En çok kullanılan uygulamalar', style: TextStyle(fontSize: 11)),
                   onPressed: () async {
                     final spoken = await AppUsageService.instance.getInstalledAppsSpoken();
                     await VoiceService.instance.speak(spoken);
@@ -1064,7 +1066,7 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.pie_chart_outline, size: 14),
-                  label: const Text('Screen Time', style: TextStyle(fontSize: 11)),
+                  label: const Text('Ekran süresi', style: TextStyle(fontSize: 11)),
                   onPressed: () async {
                     final spoken = await AppUsageService.instance.getTopUsedAppsSpoken();
                     await VoiceService.instance.speak(spoken);
