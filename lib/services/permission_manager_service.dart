@@ -99,7 +99,7 @@ class PermissionManagerService extends ChangeNotifier {
       AppPermissionInfo(
         type: AppPermissionType.accessibility,
         title: 'Erişilebilirlik hizmeti',
-        description: 'JARVIS'in uygulamalarda dokunma, yazma, kaydırma ve görev yürütmesini sağlar.',
+        description: "MAX'in uygulamalarda dokunma, yazma, kaydırma ve görev yürütmesini sağlar.",
         icon: Icons.accessibility_new_rounded,
         isGranted: accessibilityStatus,
         isSystemSettingsOnly: true,
@@ -122,7 +122,7 @@ class PermissionManagerService extends ChangeNotifier {
       AppPermissionInfo(
         type: AppPermissionType.batteryOptimization,
         title: 'Sınırsız arka plan pil kullanımı',
-        description: 'Android'in masa modundaki sürekli dinlemeyi uykuya almasını veya durdurmasını önler.',
+        description: "Android'in masa modundaki sürekli dinlemeyi uykuya almasını veya durdurmasını önler.",
         icon: Icons.battery_charging_full_rounded,
         isGranted: batteryStatus,
         isSystemSettingsOnly: true,
