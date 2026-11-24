@@ -85,7 +85,7 @@ class _PolyglotDiplomatDialogState extends State<PolyglotDiplomatDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'POLYGLOT DIPLOMAT',
+                              'ÇOK DİLLİ ASİSTAN',
                               style: TextStyle(
                                 color: cyan,
                                 fontFamily: 'monospace',
@@ -95,7 +95,7 @@ class _PolyglotDiplomatDialogState extends State<PolyglotDiplomatDialog> {
                               ),
                             ),
                             Text(
-                              'LIVE TWO-WAY VOICE TRANSLATOR',
+                              'CANLI İKİ YÖNLÜ SESLİ ÇEVİRİ',
                               style: TextStyle(
                                 color: Colors.white54,
                                 fontFamily: 'monospace',
@@ -150,7 +150,7 @@ class _PolyglotDiplomatDialogState extends State<PolyglotDiplomatDialog> {
                     child: _service.history.isEmpty
                         ? Center(
                             child: Text(
-                              'Speak or type below to initiate live translation between ${_service.sourceLanguage} and ${_service.targetLanguage}.',
+                              '${_service.sourceLanguage} ve ${_service.targetLanguage} arasında canlı çeviri için konuşun veya aşağıya yazın.',
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                 color: Colors.white38,
@@ -228,7 +228,7 @@ class _PolyglotDiplomatDialogState extends State<PolyglotDiplomatDialog> {
                           controller: _textController,
                           style: const TextStyle(color: Colors.white, fontSize: 13),
                           decoration: InputDecoration(
-                            hintText: 'Type phrase in ${_service.sourceLanguage}...',
+                            hintText: '${_service.sourceLanguage} dilinde bir ifade yazın...',
                             hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
                             filled: true,
                             fillColor: Colors.white.withValues(alpha: 0.06),
