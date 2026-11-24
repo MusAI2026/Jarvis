@@ -37,16 +37,16 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Clear history?'),
-        content: const Text('All recorded task runs will be deleted.'),
+        title: const Text('Geçmiş silinsin mi?'),
+        content: const Text('Kaydedilen tüm görev geçmişi silinecek.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: const Text('İptal'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear'),
+            child: const Text('Sil'),
           ),
         ],
       ),
@@ -60,11 +60,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
     final entries = _executor.historyEntries;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Task History'),
+        title: const Text('Görev geçmişi'),
         actions: [
           if (entries.isNotEmpty)
             IconButton(
-              tooltip: 'Clear all',
+              tooltip: 'Tümünü sil',
               icon: const Icon(Icons.delete_sweep_outlined),
               onPressed: _clearAll,
             ),
@@ -78,11 +78,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   Icon(Icons.history_toggle_off,
                       size: 48, color: theme.colorScheme.outline),
                   const SizedBox(height: 12),
-                  Text('No tasks yet',
+                  Text('Henüz görev yok',
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  Text('Run your first task from the home screen.',
+                  Text('İlk görevinizi ana ekrandan çalıştırın.',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant)),
                 ],
@@ -145,10 +145,10 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   text: 'Task: ${entry.goal}\n'
                       'Status: ${entry.status.name} • ${entry.steps} steps\n\n'
                       '${entry.logs.join('\n')}',
-                  subject: 'PrivateAgent task log',
+                  subject: 'JARVIS görev kaydı',
                 )),
                 icon: const Icon(Icons.share_outlined, size: 16),
-                label: const Text('Share log'),
+                label: const Text('Kaydı paylaş'),
               ),
             ),
             Container(
