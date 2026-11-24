@@ -20,19 +20,19 @@ class StatusChip extends StatelessWidget {
     return switch (status) {
       TaskStatus.success => StatusChip(
           key: key,
-          label: 'Success',
+          label: 'Başarılı',
           color: AppTheme.success,
           icon: Icons.check_circle_outline,
         ),
       TaskStatus.failed => StatusChip(
           key: key,
-          label: 'Failed',
+          label: 'Başarısız',
           color: AppTheme.danger,
           icon: Icons.error_outline,
         ),
       TaskStatus.cancelled => StatusChip(
           key: key,
-          label: 'Cancelled',
+          label: 'İptal edildi',
           color: AppTheme.warning,
           icon: Icons.stop_circle_outlined,
         ),
