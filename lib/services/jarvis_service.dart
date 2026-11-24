@@ -247,7 +247,7 @@ class JarvisService extends ChangeNotifier {
         _isAwake = false;
         _statusMessage = _shouldListenContinuously
             ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
-            : 'READY // TAP TO TALK';
+            : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
         notifyListeners();
       }
     });
@@ -264,7 +264,7 @@ class JarvisService extends ChangeNotifier {
     _lastUserSpeech = '';
     _statusMessage = _shouldListenContinuously
         ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
-        : 'READY // TAP TO TALK';
+        : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
     _phase = JarvisPhase.idle;
     notifyListeners();
   }
@@ -279,7 +279,7 @@ class JarvisService extends ChangeNotifier {
     _wakeUp();
     _isInFollowUp = true;
     _phase = JarvisPhase.listening;
-    _statusMessage = 'LISTENING // ASK A FOLLOW-UP OR COMMAND';
+    _statusMessage = 'DİNLİYOR // SORU VEYA KOMUT SÖYLEYİN';
     notifyListeners();
 
     await startListening(manual: true);
@@ -450,7 +450,7 @@ class JarvisService extends ChangeNotifier {
       stopAlwaysOn();
       const msg = 'Always-On listening standby, sir.';
       _lastJarvisSpeech = msg;
-      _statusMessage = 'READY // TAP TO TALK';
+      _statusMessage = 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(msg);
     }
@@ -468,13 +468,13 @@ class JarvisService extends ChangeNotifier {
     onEnterJarvisMode();
     _wakeUp();
     _phase = JarvisPhase.thinking;
-    _statusMessage = 'SYNTHESIZING EXECUTIVE BRIEFING';
+    _statusMessage = 'GÜNDEM ÖZETİ HAZIRLANIYOR';
     notifyListeners();
 
     final greeting = await PersonalityService.instance.generateExecutiveGreeting();
     _lastJarvisSpeech = greeting;
     _phase = JarvisPhase.speaking;
-    _statusMessage = 'EXECUTIVE BRIEFING // READY';
+    _statusMessage = 'GÜNDEM ÖZETİ HAZIR';
     notifyListeners();
     await _voice.speak(greeting);
     _standDown();
@@ -497,7 +497,7 @@ class JarvisService extends ChangeNotifier {
     if (SettingsService.instance.proactiveVoiceConfirmationEnabled) {
       _wakeUp();
       _phase = JarvisPhase.listening;
-      _statusMessage = 'AWAITING RESPONSE // SAY "YES" OR "NO"';
+      _statusMessage = 'YANIT BEKLENİYOR // EVET VEYA HAYIR DEYİN';
       notifyListeners();
 
       await startListening(manual: true);
@@ -517,7 +517,7 @@ class JarvisService extends ChangeNotifier {
         _standDown();
       } else {
         _phase = JarvisPhase.idle;
-        _statusMessage = 'READY // TAP TO TALK';
+        _statusMessage = 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
         notifyListeners();
       }
     }
@@ -583,7 +583,7 @@ class JarvisService extends ChangeNotifier {
     // In passive standby background waiting for wake-word, stay in idle so UI is calm and does NOT flicker!
     if (_isAwake || !_shouldListenContinuously) {
       _phase = JarvisPhase.listening;
-      _statusMessage = 'LISTENING // AUDIO RECEPTORS ACTIVE';
+      _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
     } else {
       _phase = JarvisPhase.idle;
       _statusMessage = 'BEKLEMEDE // "MERHABA JARVIS" DEYİN';
@@ -617,7 +617,7 @@ class JarvisService extends ChangeNotifier {
             // Set visual listening state immediately, but NEVER cut off the user!
             // Let the user finish speaking their full command until silence / isFinal.
             _phase = JarvisPhase.listening;
-            _statusMessage = 'LISTENING // AUDIO RECEPTORS ACTIVE';
+            _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
             notifyListeners();
           }
         } else if (_isAwake) {
@@ -649,9 +649,9 @@ class JarvisService extends ChangeNotifier {
             _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
             _statusMessage = _shouldListenContinuously
                 ? (_isAwake
-                    ? 'LISTENING // AUDIO RECEPTORS ACTIVE'
+                    ? 'DİNLİYOR // MİKROFON AÇIK'
                     : 'BEKLEMEDE // "MERHABA JARVIS" DEYİN')
-                : 'READY // TAP TO TALK';
+                : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
             notifyListeners();
           }
         }
@@ -660,7 +660,7 @@ class JarvisService extends ChangeNotifier {
 
     if (!started) {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
-      _statusMessage = 'MICROPHONE UNAVAILABLE';
+      _statusMessage = 'MİKROFON KULLANILAMIYOR';
       notifyListeners();
     }
     return started;
@@ -706,7 +706,7 @@ class JarvisService extends ChangeNotifier {
         _statusMessage = 'CONFIRMED // ENGAGING ${suggestion.title.toUpperCase()}';
         notifyListeners();
 
-        const ack = 'Right away, sir. Executing now.';
+        const ack = 'Hemen efendim. İşlemi başlatıyorum.';
         _lastJarvisSpeech = ack;
         _phase = JarvisPhase.speaking;
         notifyListeners();
@@ -716,8 +716,8 @@ class JarvisService extends ChangeNotifier {
         return;
       } else if (isNegative) {
         _phase = JarvisPhase.speaking;
-        _statusMessage = 'DISMISSED // STANDING DOWN';
-        const ack = 'Understood, sir. Standing by.';
+        _statusMessage = 'İPTAL // BEKLEMEDE';
+        const ack = 'Anladım efendim. Beklemedeyim.';
         _lastJarvisSpeech = ack;
         notifyListeners();
         await _voice.speak(ack);
@@ -754,7 +754,7 @@ class JarvisService extends ChangeNotifier {
         // User said ONLY "Hey Jarvis" or "Jarvis" -> Stay in LISTENING state waiting for command
         _wakeUp();
         _phase = JarvisPhase.listening;
-        _statusMessage = 'LISTENING // AUDIO RECEPTORS ACTIVE';
+        _statusMessage = 'DİNLİYOR // MİKROFON AÇIK';
         notifyListeners();
         return;
       } else {
@@ -788,7 +788,7 @@ class JarvisService extends ChangeNotifier {
       _phase = _executor.isBusy ? JarvisPhase.executing : JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
           ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
-          : 'READY // TAP TO TALK';
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
   }
@@ -799,8 +799,8 @@ class JarvisService extends ChangeNotifier {
     if (_executor.isBusy) {
       _executor.cancel();
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'PROTOCOL ABORTED // STANDING DOWN';
-      const speech = 'Aborting task immediately, sir.';
+      _statusMessage = 'GÖREV İPTAL EDİLDİ // BEKLEMEDE';
+      const speech = 'Görevi hemen iptal ediyorum efendim.';
       _lastJarvisSpeech = speech;
       notifyListeners();
       await _voice.speak(speech);
@@ -809,7 +809,7 @@ class JarvisService extends ChangeNotifier {
       _phase = JarvisPhase.idle;
       _statusMessage = _shouldListenContinuously
           ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
-          : 'READY // TAP TO TALK';
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
     }
   }
@@ -823,13 +823,17 @@ class JarvisService extends ChangeNotifier {
 
     _lastUserSpeech = trimmed;
     _phase = JarvisPhase.thinking;
-    _statusMessage = 'COMPUTING // ANALYZING COMMAND';
+    _statusMessage = 'DÜŞÜNÜYOR // KOMUT İNCELENİYOR';
     notifyListeners();
 
     final lower = trimmed.toLowerCase();
 
     // 1. Fast cancel / abort check
-    if (lower == 'stop' ||
+    if (lower == 'dur' ||
+        lower == 'sus' ||
+        lower == 'iptal' ||
+        lower == 'görevi iptal et' ||
+        lower == 'stop' ||
         lower == 'cancel' ||
         lower == 'abort' ||
         lower.contains('stop task') ||
@@ -839,7 +843,10 @@ class JarvisService extends ChangeNotifier {
     }
 
     // 2. Stand down / Sleep commands
-    if (lower == 'stand down' ||
+    if (lower == 'uyku moduna geç' ||
+        lower == 'beklemeye geç' ||
+        lower == 'iyi geceler' ||
+        lower == 'stand down' ||
         lower == 'go to sleep' ||
         lower == 'sleep' ||
         lower == 'goodnight' ||
@@ -859,7 +866,7 @@ class JarvisService extends ChangeNotifier {
       _phase = JarvisPhase.speaking;
       _statusMessage = _shouldListenContinuously
           ? 'BEKLEMEDE // "MERHABA JARVIS" DEYİN'
-          : 'READY // TAP TO TALK';
+          : 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(reply);
       return;
@@ -876,13 +883,13 @@ class JarvisService extends ChangeNotifier {
         lower.contains('fill my info') ||
         lower.contains('fill my information')) {
       _phase = JarvisPhase.thinking;
-      _statusMessage = 'FORM AUTOFILL // SURVEYING FIELDS';
+      _statusMessage = 'FORM DOLDURMA // ALANLAR İNCELENİYOR';
       notifyListeners();
 
       final result = await FormFillingService.instance.fillActiveForm();
       _lastJarvisSpeech = result;
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'FORM AUTOFILL COMPLETE';
+      _statusMessage = 'FORM DOLDURMA TAMAMLANDI';
       notifyListeners();
       await _voice.speak(result);
       await _startFollowUpListening();
@@ -890,7 +897,9 @@ class JarvisService extends ChangeNotifier {
     }
 
     // 3. Hands-Free Always-On toggle commands
-    if (lower == 'always on' ||
+    if (lower == 'sürekli dinlemeyi aç' ||
+        lower == 'eller serbest' ||
+        lower == 'always on' ||
         lower == 'activate always on' ||
         lower == 'hands free' ||
         lower == 'continuous listening' ||
@@ -898,25 +907,26 @@ class JarvisService extends ChangeNotifier {
         lower == 'enable always on') {
       await SettingsService.instance.setJarvisAlwaysOn(true);
       ensureAlwaysOnRunning();
-      const reply = 'Always-on continuous listening engaged, sir.';
+      const reply = 'Sürekli dinleme etkinleştirildi efendim.';
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'ALWAYS-ON RECEPTORS ACTIVE';
+      _statusMessage = 'SÜREKLİ DİNLEME AÇIK';
       notifyListeners();
       await _voice.speak(reply);
       return;
     }
 
-    if (lower == 'turn off always on' ||
+    if (lower == 'sürekli dinlemeyi kapat' ||
+        lower == 'turn off always on' ||
         lower == 'disable always on' ||
         lower == 'deactivate always on' ||
         lower == 'stop always on') {
       await SettingsService.instance.setJarvisAlwaysOn(false);
       stopAlwaysOn();
-      const reply = 'Always-on continuous listening deactivated, sir.';
+      const reply = 'Sürekli dinleme kapatıldı efendim.';
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'READY // TAP TO TALK';
+      _statusMessage = 'HAZIR // KONUŞMAK İÇİN DOKUNUN';
       notifyListeners();
       await _voice.speak(reply);
       return;
@@ -931,7 +941,7 @@ class JarvisService extends ChangeNotifier {
         lower == 'update your protocols' ||
         lower == 'evolve memory') {
       _phase = JarvisPhase.thinking;
-      _statusMessage = 'SYNTHESIZING HERMES CONTEXT';
+      _statusMessage = 'HERMES BAĞLAMI HAZIRLANIYOR';
       notifyListeners();
       await HermesEvolutionService.instance.evolveContext();
       final factsCount = ConversationalMemoryService.instance.facts.length;
@@ -940,7 +950,7 @@ class JarvisService extends ChangeNotifier {
           'Hermes self-evolution cycle completed, sir. Synthesized $factsCount user memory facts and $workflowCount active protocols across SOUL.md, USER.md, and AGENT.md.';
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'SELF-EVOLUTION COMPLETE';
+      _statusMessage = 'KENDİNİ GELİŞTİRME TAMAMLANDI';
       notifyListeners();
       await _voice.speak(reply);
       await _startFollowUpListening();
@@ -958,7 +968,7 @@ class JarvisService extends ChangeNotifier {
       const reply = 'Multi-Task Decoupler interface opened, sir. Ready for your compound instructions.';
       _lastJarvisSpeech = reply;
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'MULTI-TASK DECOUPLER ACTIVE';
+      _statusMessage = 'ÇOKLU GÖREV MODU AÇIK';
       notifyListeners();
       await _voice.speak(reply);
       return;
@@ -978,7 +988,7 @@ class JarvisService extends ChangeNotifier {
             : 'Macro recording concluded, sir.';
         _lastJarvisSpeech = reply;
         _phase = JarvisPhase.speaking;
-        _statusMessage = 'MACRO CODIFIED';
+        _statusMessage = 'MAKRO KAYDEDİLDİ';
         notifyListeners();
         await _voice.speak(reply);
         await _startFollowUpListening();
@@ -1035,7 +1045,7 @@ class JarvisService extends ChangeNotifier {
         lower.contains('jarvis eye') ||
         lower.contains('what do you see')) {
       _phase = JarvisPhase.thinking;
-      _statusMessage = 'OPTICAL SENSORS ACTIVE // SCANNING';
+      _statusMessage = 'OPTİK SENSÖRLER AÇIK // TARANIYOR';
       notifyListeners();
 
       const ack = 'Optical sensors engaged, sir. Inspecting the subject now.';
@@ -1047,7 +1057,7 @@ class JarvisService extends ChangeNotifier {
       final result = await VisionPerceptionService.instance.inspectOpticalSnapshot(customPrompt: trimmed);
       _lastJarvisSpeech = result.spokenSummary;
       _phase = JarvisPhase.speaking;
-      _statusMessage = 'OPTICAL SCAN COMPLETE';
+      _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
       notifyListeners();
       await _voice.speak(result.spokenSummary);
       await _startFollowUpListening();
@@ -1125,7 +1135,7 @@ class JarvisService extends ChangeNotifier {
       await _voice.speak(ack);
 
       _phase = JarvisPhase.thinking;
-      _statusMessage = 'SYNTHESIZING EXECUTIVE BRIEFING';
+      _statusMessage = 'GÜNDEM ÖZETİ HAZIRLANIYOR';
       notifyListeners();
 
       final summary = await JarvisToolsService.instance.summarizeForegroundScreen();
@@ -2625,7 +2635,7 @@ Mastering the boundless road.
 
         _lastJarvisSpeech = analysis;
         _phase = JarvisPhase.speaking;
-        _statusMessage = 'OPTICAL SCAN COMPLETE';
+        _statusMessage = 'OPTİK TARAMA TAMAMLANDI';
         notifyListeners();
         await _voice.speak(analysis);
         break;
