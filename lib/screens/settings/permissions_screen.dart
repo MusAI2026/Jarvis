@@ -41,10 +41,10 @@ class _PermissionsScreenState extends State<PermissionsScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('App Permissions'),
+        title: const Text('Uygulama izinleri'),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: 'Yenile',
             icon: const Icon(Icons.refresh_rounded),
             onPressed: () => _service.refresh(),
           ),
@@ -100,8 +100,8 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                                 const SizedBox(height: 2),
                                 Text(
                                   granted == total
-                                      ? 'All systems fully authorized for autonomous operation.'
-                                      : 'Some capabilities require user permission to function.',
+                                      ? 'Otonom çalışma için tüm sistem izinleri verildi.'
+                                      : 'Bazı özelliklerin çalışması için izin gerekiyor.',
                                   style: theme.textTheme.bodySmall?.copyWith(
                                     color: theme.colorScheme.onSurfaceVariant,
                                     fontSize: 12,
@@ -130,13 +130,13 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                           Expanded(
                             child: FilledButton.icon(
                               icon: const Icon(Icons.done_all_rounded, size: 18),
-                              label: const Text('Grant Core Permissions'),
+                              label: const Text('Temel izinleri ver'),
                               onPressed: () async {
                                 await _service.requestAllCorePermissions();
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('Permissions requested'),
+                                      content: Text('İzinler istendi'),
                                       duration: Duration(seconds: 2),
                                     ),
                                   );
@@ -153,7 +153,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               const SizedBox(height: 20),
 
               // Permissions List
-              _sectionTitle('Communications & Inboxes'),
+              _sectionTitle('İletişim ve gelen kutuları'),
               for (final p in _service.permissions.where(
                 (p) =>
                     p.type == AppPermissionType.sms ||
@@ -166,7 +166,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               ],
 
               const SizedBox(height: 14),
-              _sectionTitle('Core Voice & Automation'),
+              _sectionTitle('Ses ve otomasyon'),
               for (final p in _service.permissions.where(
                 (p) =>
                     p.type == AppPermissionType.microphone ||
@@ -181,7 +181,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               const SizedBox(height: 16),
               OutlinedButton.icon(
                 icon: const Icon(Icons.settings_outlined, size: 18),
-                label: const Text('Open System App Settings'),
+                label: const Text('Sistem uygulama ayarlarını aç'),
                 onPressed: () => _service.openAppInfo(),
               ),
             ],
@@ -257,7 +257,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                           ),
                         ),
                         child: Text(
-                          p.isGranted ? 'GRANTED' : (p.isSystemSettingsOnly ? 'CONFIGURE' : 'REQUIRED'),
+                          p.isGranted ? 'VERİLDİ' : (p.isSystemSettingsOnly ? 'AYARLA' : 'GEREKLİ'),
                           style: TextStyle(
                             fontSize: 9.5,
                             fontWeight: FontWeight.w800,
@@ -293,7 +293,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                           size: 14,
                         ),
                         label: Text(
-                          p.isSystemSettingsOnly ? 'Open Settings' : 'Grant Permission',
+                          p.isSystemSettingsOnly ? 'Ayarları aç' : 'İzin ver',
                           style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
                         ),
                         onPressed: () async {
